@@ -20,7 +20,7 @@ export interface Planificador {
 	proxima(): Date | null
 }
 
-/** Minutos que van de America/Caracas a UTC en ese instante. */
+/** Minutos que hay que sumarle a la hora local de la zona para llegar a UTC (Caracas: +240). */
 export function offsetZona(fecha: Date, zona: string = ZONA): number {
 	const partes = new Intl.DateTimeFormat('en-CA', {
 		timeZone: zona, year: 'numeric', month: '2-digit', day: '2-digit',
@@ -33,10 +33,10 @@ export function offsetZona(fecha: Date, zona: string = ZONA): number {
 
 /** Convierte una hora local de la zona en un instante UTC. */
 export function aInstanteUtc(anio: number, mes: number, dia: number, hora: number, minuto: number, zona: string = ZONA): Date {
-	let instante = Date.UTC(anio, mes - 1, dia, hora, minuto)
+	const base = Date.UTC(anio, mes - 1, dia, hora, minuto)
+	let instante = base
 	for (let i = 0; i < 3; i++) {
-		const offset = offsetZona(new Date(instante), zona)
-		const corregido = Date.UTC(anio, mes - 1, dia, hora, minuto) - offset * 60_000
+		const corregido = base + offsetZona(new Date(instante), zona) * 60_000
 		if (corregido === instante) break
 		instante = corregido
 	}
