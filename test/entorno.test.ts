@@ -61,10 +61,10 @@ describe('entorno de la prueba', () => {
 		}
 	})
 
-	it('el panel sirve el esqueleto y el enunciado, sin pantalla de simulador', async () => {
+	it('el panel sirve sus pantallas y el enunciado, sin pantalla de simulador', async () => {
 		for (const path of ['/', '/clientes', '/clientes/1', '/sincronizacion', '/configuracion']) {
 			const body = await (await fetch(`${panelBase}${path}`)).text()
-			assert.match(body, /Por implementar/, path)
+			assert.doesNotMatch(body, /Por implementar/, path)
 		}
 		assert.match(await (await fetch(`${panelBase}/enunciado`)).text(), /Criterios de aceptación/)
 		assert.equal((await fetch(`${panelBase}/simulador`)).status, 404)

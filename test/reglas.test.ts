@@ -16,11 +16,11 @@ import { proximaEjecucion, offsetZona, fechaCivil } from '../src/cobrix/planific
 
 describe('identificacion del titular', () => {
 	it('normaliza letra, separadores y ceros a la izquierda', () => {
-		assert.equal(normalizarIdentificacion('V-12345678').valor?.documento, 'V12345678')
-		assert.equal(normalizarIdentificacion('09000123').valor?.documento, '9000123')
-		assert.equal(normalizarIdentificacion('v-12345678').valor?.documento, 'V12345678')
-		assert.equal(normalizarIdentificacion('J-40123456-7').valor?.documento, 'J401234567')
-		assert.equal(normalizarIdentificacion(' V12345678 ').valor?.documento, 'V12345678')
+		const id1 = normalizarIdentificacion('V-12345678'); assert.ok(id1.ok); assert.equal(id1.valor.documento, 'V12345678')
+		const id2 = normalizarIdentificacion('09000123'); assert.ok(id2.ok); assert.equal(id2.valor.documento, '9000123')
+		const id3 = normalizarIdentificacion('v-12345678'); assert.ok(id3.ok); assert.equal(id3.valor.documento, 'V12345678')
+		const id4 = normalizarIdentificacion('J-40123456-7'); assert.ok(id4.ok); assert.equal(id4.valor.documento, 'J401234567')
+		const id5 = normalizarIdentificacion(' V12345678 '); assert.ok(id5.ok); assert.equal(id5.valor.documento, 'V12345678')
 	})
 
 	it('rechaza lo que no puede interpretar, sin adivinar', () => {
@@ -40,9 +40,9 @@ describe('identificacion del titular', () => {
 
 describe('periodo, vencimiento y corte', () => {
 	it('saca el periodo de la etiqueta del administrador', () => {
-		assert.equal(leerPeriodo(['PLAN15MB25 - 2026 Agosto']).valor, '2026-08')
-		assert.equal(leerPeriodo(['PLAN3MB20 - 2026 Septiembre']).valor, '2026-09')
-		assert.equal(leerPeriodo(['PLAN - 2026 Diciembre']).valor, '2026-12')
+		const per1 = leerPeriodo(['PLAN15MB25 - 2026 Agosto']); assert.ok(per1.ok); assert.equal(per1.valor, '2026-08')
+		const per2 = leerPeriodo(['PLAN3MB20 - 2026 Septiembre']); assert.ok(per2.ok); assert.equal(per2.valor, '2026-09')
+		const per3 = leerPeriodo(['PLAN - 2026 Diciembre']); assert.ok(per3.ok); assert.equal(per3.valor, '2026-12')
 		assert.equal(leerPeriodo(['sin periodo']).ok, false)
 		assert.equal(leerPeriodo([]).ok, false)
 	})
