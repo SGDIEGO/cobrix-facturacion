@@ -100,6 +100,8 @@ function controlesPaginacion(base: string, buscar: URLSearchParams, info: Pagina
 		params.set('pagina', String(pagina))
 		if (info.tamano !== TAMANO_POR_DEFECTO) params.set('tamano', String(info.tamano))
 		else params.delete('tamano')
+		params.delete('mensaje')
+		params.delete('tono')
 		const query = params.toString()
 		return `${base}${query ? `?${query}` : ''}`
 	}
@@ -229,6 +231,8 @@ export function createApp(deps: AppDeps): Server {
 		params.set('orden', opciones.clave)
 		params.set('direccion', siguiente)
 		params.delete('pagina')
+		params.delete('mensaje')
+		params.delete('tono')
 		const href = `${opciones.base}?${params.toString()}`
 		const glifo = !activa ? 'sort' : opciones.orden.direccion === 'asc' ? 'sort-up' : 'sort-down'
 		const ariaSort = !activa ? 'none' : opciones.orden.direccion === 'asc' ? 'ascending' : 'descending'
@@ -857,7 +861,7 @@ export function createApp(deps: AppDeps): Server {
 				const flash = mensaje && ['ok', 'bad', 'info', 'warn'].includes(tono)
 					? flashNueva(tono, mensaje, raw(esc(mensaje).replaceAll('Configuracion', '<a href="/configuracion">Configuracion</a>')))
 					: undefined
-				return sendHtml(res, 200, cabecera('Detalle de corrida', '/sincronizacion', detalleCorrida(id, buscar, flash)))
+				return sendHtml(res, 200, cabecera('Detalle de corrida', '/sincronizacion', detalleCorrida(id, buscar), flash))
 			}
 			if (/^\/clientes\/[^/]+$/.test(path)) {
 				const documento = decodeURIComponent(path.split('/').pop() ?? '')
