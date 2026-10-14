@@ -19,6 +19,7 @@ import { actualizarPagadas } from '../cobrix/pagadas.ts'
 import { today } from '../shared/dates.ts'
 import { configDesdeFormulario, describirConfig, empresaDesdeFormulario, proveedorDesdeFormulario } from '../cobrix/formularios.ts'
 import type { ResultadoCuota } from '../cobrix/tipos.ts'
+import { clavesOrden, leerOrden, orderDe, type Direccion, type Orden, type TablaOrden } from '../cobrix/orden.ts'
 import { CSS, dateTime, date, esc, icon, html, layout, pill, usd, type Raw, type Tone } from './layout.ts'
 
 export interface AppDeps {
@@ -174,14 +175,46 @@ export function createApp(deps: AppDeps): Server {
 
 	const nota = (texto: string): Raw => html`<p class="nota">${icon('circle-info')}<span>${texto}</span></p>`
 
+	/**
+	 * Cabecera de columna ordenable. El estado va en la URL (`orden` + `direccion`), asi que
+	 * funciona sin JavaScript y sobrevive a la paginacion.
+	 */
+	function thOrden(opciones: {
+		tabla: TablaOrden
+		clave: string
+		etiqueta: string
+		buscar: URLSearchParams
+		orden: Orden
+		numerica?: boolean
+	}): Raw {
+		const permitidas = clavesOrden(opciones.tabla)
+		if (!permitidas.includes(opciones.clave)) return html`<th class="${opciones.numerica ? 'num' : ''}">${opciones.etiqueta}</th>`
+		const activa = opciones.orden.clave === opciones.clave
+		const siguiente: Direccion = activa && opciones.orden.direccion === 'asc' ? 'desc' : 'asc'
+		const params = new URLSearchParams(opciones.buscar)
+		params.set('orden', opciones.clave)
+		params.set('direccion', siguiente)
+		params.delete('pagina')
+		const href = `?${params.toString()}`
+		const glifo = !activa ? 'sort' : opciones.orden.direccion === 'asc' ? 'sort-up' : 'sort-down'
+		const ariaSort = !activa ? 'none' : opciones.orden.direccion === 'asc' ? 'ascending' : 'descending'
+		const titulo = activa
+			? `Ordenado por ${opciones.etiqueta} (${opciones.orden.direccion === 'asc' ? 'ascendente' : 'descendente'}). Pulsa para invertir.`
+			: `Ordenar por ${opciones.etiqueta}`
+		return html`<th class="ordenable ${opciones.numerica ? 'num' : ''}" aria-sort="${ariaSort}">
+			<a href="${href}" title="${titulo}">${opciones.etiqueta}${icon(glifo, 'caret')}</a>
+		</th>`
+	}
+
 	// ---------------------------------------------------------------- Resumen
 
-	function resumen(flash?: Flash | undefined): Raw {
+	function resumen(buscar: URLSearchParams, flash?: Flash | undefined): Raw {
 		const totales = almacen.totales(today())
 		const proveedor = almacen.leerProveedor()
 		const config = almacen.leerConfig()
 		const corridas = almacen.ultimasCorridas()
-		const deudores = almacen.clientesConCuotasVencidas(today())
+		const ordenDeudores = leerOrden(buscar, clavesOrden('deudores'), 'deuda', 'desc')
+		const deudores = almacen.clientesConCuotasVencidas(today(), ordenDeudores)
 		const tiles = [
 			{ label: 'Clientes', icono: 'users', valor: String(totales.clientes), href: '/clientes' },
 			{ label: 'Contratos importados', icono: 'file-contract', valor: String(totales.contratos), href: '/clientes' },
@@ -243,7 +276,11 @@ export function createApp(deps: AppDeps): Server {
 				<section class="card">
 					<header><h2>${icon('hand-holding-dollar')}Cobro pendiente</h2><a class="btn small" href="/clientes">Ver clientes</a></header>
 					<div class="table-wrap"><table>
-						<thead><tr><th>Cliente</th><th class="num">Vencidas</th><th class="num">Deuda</th></tr></thead>
+						<thead><tr>
+							${thOrden({ tabla: 'deudores', clave: 'cliente', etiqueta: 'Cliente', buscar: new URLSearchParams(), orden: ordenDeudores })}
+							${thOrden({ tabla: 'deudores', clave: 'vencidas', etiqueta: 'Vencidas', buscar: new URLSearchParams(), orden: ordenDeudores, numerica: true })}
+							${thOrden({ tabla: 'deudores', clave: 'deuda', etiqueta: 'Deuda', buscar: new URLSearchParams(), orden: ordenDeudores, numerica: true })}
+						</tr></thead>
 						<tbody>${deudores.map(deudor => html`
 							<tr><td><a href="/clientes/${encodeURIComponent(deudor.documento)}">${esc(deudor.nombre)}</a></td>
 							<td class="num">${deudor.vencidas}</td><td class="num dinero">${usd(deudor.deudaCents)}</td></tr>`)}
@@ -297,12 +334,13 @@ export function createApp(deps: AppDeps): Server {
 		const total = almacen.contarClientes(busqueda)
 		const tamano = Math.max(1, Number(buscar.get('tamano')) || TAMANO_POR_DEFECTO)
 		const info = pagina(Number(buscar.get('pagina')) || 1, tamano, total)
-		const lista = almacen.listarClientes(busqueda, info.numero, info.tamano)
+		const orden = leerOrden(buscar, clavesOrden('clientes'), 'nombre', 'asc')
+		const lista = almacen.listarClientes(busqueda, info.numero, info.tamano, orden)
 
 		return html`
 			<section class="card"><div class="body">
 				<form class="search" method="get" action="/clientes">
-					<input type="search" name="q" value="${esc(busqueda)}" placeholder="Nombre, cedula o RIF" aria-label="Buscar clientes">
+					<input type="search" name="q" value="${esc(busqueda)}" placeholder="Nombre, cedula o RIF" aria-label="Buscar clientes" data-debounce="300">
 					<button class="btn" type="submit">${icon('magnifying-glass')}Buscar</button>
 					${busqueda ? html`<a class="btn" href="/clientes">${icon('xmark')}Limpiar</a>` : ''}
 					<input type="hidden" name="tamano" value="${info.tamano}">
@@ -312,9 +350,14 @@ export function createApp(deps: AppDeps): Server {
 				<header><h2>${icon('users')}Clientes</h2><span class="muted">${total} en total</span></header>
 				<div class="table-wrap"><table>
 					<thead><tr>
-						<th>Nombre</th><th>Documento</th><th>Tipo</th>
-						<th class="num">Contratos</th><th class="num">Abiertas</th><th class="num">Pagadas</th>
-						<th class="num">Deuda</th><th>Vence la mas antigua</th>
+						${thOrden({ tabla: 'clientes', clave: 'nombre', etiqueta: 'Nombre', buscar, orden })}
+						${thOrden({ tabla: 'clientes', clave: 'documento', etiqueta: 'Documento', buscar, orden })}
+						${thOrden({ tabla: 'clientes', clave: 'tipo', etiqueta: 'Tipo', buscar, orden })}
+						${thOrden({ tabla: 'clientes', clave: 'contratos', etiqueta: 'Contratos', buscar, orden, numerica: true })}
+						${thOrden({ tabla: 'clientes', clave: 'abiertas', etiqueta: 'Abiertas', buscar, orden, numerica: true })}
+						${thOrden({ tabla: 'clientes', clave: 'pagadas', etiqueta: 'Pagadas', buscar, orden, numerica: true })}
+						${thOrden({ tabla: 'clientes', clave: 'deuda', etiqueta: 'Deuda', buscar, orden, numerica: true })}
+						${thOrden({ tabla: 'clientes', clave: 'vence_antiguo', etiqueta: 'Vence la mas antigua', buscar, orden })}
 					</tr></thead>
 					<tbody>${lista.length === 0
 						? html`<tr class="empty-row"><td colspan="8">${busqueda ? `Ningun cliente coincide con "${esc(busqueda)}". Prueba con menos letras o busca por documento.` : 'Aun no hay clientes. Corre una importacion para traerlos.'}</td></tr>`
@@ -344,13 +387,15 @@ export function createApp(deps: AppDeps): Server {
 				<p>El documento <span class="mono">${esc(documento)}</span> no esta en Cobrix.
 				<a href="/clientes">Volver a Clientes</a>.</p></div>`
 		}
-		const contratos = almacen.contratosDeCliente(cliente.id)
+		const contratos = almacen.contratosDeCliente(cliente.id, leerOrden(buscar, clavesOrden('contratos'), 'id', 'asc'))
 		const totalFacturas = almacen.contarFacturasCliente(cliente.id)
 		const totalEventos = almacen.contarEventosCliente(cliente.id)
 		const tamano = Math.max(1, Number(buscar.get('tamano')) || TAMANO_POR_DEFECTO)
 		const paginaFacturas = pagina(Number(buscar.get('facturas')) || 1, tamano, totalFacturas)
 		const paginaEventos = pagina(Number(buscar.get('eventos')) || 1, tamano, totalEventos)
-		const facturas = almacen.facturasDeCliente(cliente.id, paginaFacturas.numero, paginaFacturas.tamano)
+		const ordenFacturas = leerOrden(buscar, clavesOrden('facturas'), 'periodo', 'desc')
+		const ordenContratos = leerOrden(buscar, clavesOrden('contratos'), 'id', 'asc')
+		const facturas = almacen.facturasDeCliente(cliente.id, paginaFacturas.numero, paginaFacturas.tamano, ordenFacturas)
 		const eventos = almacen.eventosDeCliente(cliente.id, paginaEventos.numero, paginaEventos.tamano)
 		const todas = almacen.facturasDeCliente(cliente.id)
 		const abiertas = todas.filter(factura => factura.estado === 'ABIERTA')
@@ -379,7 +424,13 @@ export function createApp(deps: AppDeps): Server {
 				</div></section>
 				<section class="card"><header><h2>${icon('file-contract')}Contratos en el administrador</h2></header>
 					<div class="table-wrap"><table>
-						<thead><tr><th>Contrato</th><th>Estado</th><th>Plan</th><th>Sucursal</th><th class="num">Precio</th></tr></thead>
+						<thead><tr>
+							${thOrden({ tabla: 'contratos', clave: 'id', etiqueta: 'Contrato', buscar, orden: ordenContratos })}
+							${thOrden({ tabla: 'contratos', clave: 'estado', etiqueta: 'Estado', buscar, orden: ordenContratos })}
+							${thOrden({ tabla: 'contratos', clave: 'plan', etiqueta: 'Plan', buscar, orden: ordenContratos })}
+							${thOrden({ tabla: 'contratos', clave: 'sucursal', etiqueta: 'Sucursal', buscar, orden: ordenContratos })}
+							${thOrden({ tabla: 'contratos', clave: 'precio', etiqueta: 'Precio', buscar, orden: ordenContratos, numerica: true })}
+						</tr></thead>
 						<tbody>${contratos.length === 0
 							? html`<tr class="empty-row"><td colspan="5" class="muted">Sin contratos importados.</td></tr>`
 							: contratos.map(contrato => html`
@@ -395,8 +446,16 @@ export function createApp(deps: AppDeps): Server {
 			<section class="card"><header><h2>${icon('file-invoice-dollar')}Facturas</h2><span class="muted">Una factura por cuota del administrador</span></header>
 				<div class="table-wrap"><table>
 					<thead><tr>
-						<th>Numero</th><th>Cuota</th><th>Contrato</th><th>Periodo</th><th>Vencimiento</th><th>Corte</th>
-						<th class="num">Total</th><th class="num">Saldo</th><th>Estado</th>
+						${thOrden({ tabla: 'facturas', clave: 'numero', etiqueta: 'Numero', buscar, orden: ordenFacturas })}
+						${thOrden({ tabla: 'facturas', clave: 'cuota', etiqueta: 'Cuota', buscar, orden: ordenFacturas })}
+						${thOrden({ tabla: 'facturas', clave: 'contrato', etiqueta: 'Contrato', buscar, orden: ordenFacturas })}
+						${thOrden({ tabla: 'facturas', clave: 'periodo', etiqueta: 'Periodo', buscar, orden: ordenFacturas })}
+						${thOrden({ tabla: 'facturas', clave: 'vencimiento', etiqueta: 'Vencimiento', buscar, orden: ordenFacturas })}
+						${thOrden({ tabla: 'facturas', clave: 'corte', etiqueta: 'Corte', buscar, orden: ordenFacturas })}
+						${thOrden({ tabla: 'facturas', clave: 'total', etiqueta: 'Total', buscar, orden: ordenFacturas, numerica: true })}
+						${thOrden({ tabla: 'facturas', clave: 'saldo', etiqueta: 'Saldo', buscar, orden: ordenFacturas, numerica: true })}
+						${thOrden({ tabla: 'facturas', clave: 'estado', etiqueta: 'Estado', buscar, orden: ordenFacturas })}
+						${thOrden({ tabla: 'facturas', clave: 'pagada', etiqueta: 'Pagada', buscar, orden: ordenFacturas })}
 					</tr></thead>
 					<tbody>${facturas.length === 0
 						? html`<tr class="empty-row"><td colspan="9">Sin facturas.</td></tr>`
@@ -463,7 +522,8 @@ export function createApp(deps: AppDeps): Server {
 		const total = almacen.contarCorridas()
 		const tamano = Math.max(1, Number(buscar.get('tamano')) || TAMANO_POR_DEFECTO)
 		const info = pagina(Number(buscar.get('pagina')) || 1, tamano, total)
-		const corridas = almacen.listarCorridas(100, info.numero, info.tamano)
+		const orden = leerOrden(buscar, clavesOrden('corridas'), 'id', 'desc')
+		const corridas = almacen.listarCorridas(100, info.numero, info.tamano, orden)
 
 		return html`
 			<section class="grid2">
@@ -494,7 +554,15 @@ export function createApp(deps: AppDeps): Server {
 			</section>
 			<section class="card"><header><h2>${icon('clock-rotate-left')}Corridas</h2><span class="muted">${total} en total</span></header>
 				<div class="table-wrap"><table>
-					<thead><tr><th>#</th><th>Tipo</th><th>Inicio</th><th>Simulacion</th><th>Estado</th><th>Resultado</th><th></th></tr></thead>
+					<thead><tr>
+						${thOrden({ tabla: 'corridas', clave: 'id', etiqueta: '#', buscar, orden })}
+						${thOrden({ tabla: 'corridas', clave: 'tipo', etiqueta: 'Tipo', buscar, orden })}
+						${thOrden({ tabla: 'corridas', clave: 'inicio', etiqueta: 'Inicio', buscar, orden })}
+						${thOrden({ tabla: 'corridas', clave: 'simulacion', etiqueta: 'Simulacion', buscar, orden })}
+						${thOrden({ tabla: 'corridas', clave: 'estado', etiqueta: 'Estado', buscar, orden })}
+						<th>Resultado</th>
+						<th></th>
+					</tr></thead>
 					<tbody>${corridas.length === 0
 						? html`<tr class="empty-row"><td colspan="7">Todavia no hay corridas. Corre una importacion para empezar.</td></tr>`
 						: corridas.map(corrida => html`
@@ -521,7 +589,8 @@ export function createApp(deps: AppDeps): Server {
 		const total = almacen.contarItemsCorrida(id)
 		const tamano = Math.max(1, Number(buscar.get('tamano')) || TAMANO_POR_DEFECTO)
 		const info = pagina(Number(buscar.get('pagina')) || 1, tamano, total)
-		const items = almacen.itemsDeCorrida(id, info.numero, info.tamano)
+		const orden = leerOrden(buscar, clavesOrden('items'), 'id', 'asc')
+		const items = almacen.itemsDeCorrida(id, info.numero, info.tamano, orden)
 		const r = corrida.resumen
 		const esPagadas = corrida.tipo === 'PAGADAS'
 		const contadores: Array<{ label: string; icono: string; valor: number; destacado?: boolean; dinero?: boolean }> = esPagadas
@@ -553,8 +622,12 @@ export function createApp(deps: AppDeps): Server {
 				<div class="body">${leyendaResultados()}</div>
 				<div class="table-wrap"><table>
 					<thead><tr>
-						<th>Contrato</th><th>Cuota</th><th>Cliente</th>
-						<th class="num">Monto</th><th>Resultado</th><th>Motivo</th>
+						${thOrden({ tabla: 'items', clave: 'contrato', etiqueta: 'Contrato', buscar, orden })}
+						${thOrden({ tabla: 'items', clave: 'cuota', etiqueta: 'Cuota', buscar, orden })}
+						${thOrden({ tabla: 'items', clave: 'cliente', etiqueta: 'Cliente', buscar, orden })}
+						${thOrden({ tabla: 'items', clave: 'monto', etiqueta: 'Monto', buscar, orden, numerica: true })}
+						${thOrden({ tabla: 'items', clave: 'resultado', etiqueta: 'Resultado', buscar, orden })}
+						${thOrden({ tabla: 'items', clave: 'motivo', etiqueta: 'Motivo', buscar, orden })}
 					</tr></thead>
 					<tbody>${items.length === 0
 						? html`<tr class="empty-row"><td colspan="6">Sin detalle.</td></tr>`
@@ -700,7 +773,7 @@ export function createApp(deps: AppDeps): Server {
 				}
 				return sendHtml(res, 200, cabecera('Enunciado', '', html`<pre class="doc">${texto}</pre>`))
 			}
-			if (path === '/') return sendHtml(res, 200, cabecera('Resumen', '/', resumen()))
+			if (path === '/') return sendHtml(res, 200, cabecera('Resumen', '/', resumen(buscar)))
 			if (path === '/clientes') return sendHtml(res, 200, cabecera('Clientes', '/clientes', clientes(buscar)))
 			if (path === '/sincronizacion') return sendHtml(res, 200, cabecera('Sincronizacion', '/sincronizacion', sincronizacion(buscar)))
 			if (path === '/configuracion') return sendHtml(res, 200, cabecera('Configuracion', '/configuracion', configuracion()))

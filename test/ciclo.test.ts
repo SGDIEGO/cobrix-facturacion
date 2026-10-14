@@ -16,6 +16,7 @@ import { Almacen } from '../src/cobrix/almacen.ts'
 import { ClienteApi } from '../src/cobrix/clienteApi.ts'
 import { importar } from '../src/cobrix/importar.ts'
 import { actualizarPagadas } from '../src/cobrix/pagadas.ts'
+import type { Orden } from '../src/cobrix/orden.ts'
 
 process.env.SANDBOX_TODAY = '2026-10-13'
 const HOY = '2026-10-13'
@@ -190,6 +191,27 @@ describe('ciclo completo de la integracion', () => {
 		assert.equal(otra.contarFacturasCliente(clienteId), 7)
 		otra.cerrar()
 	})
+	it('el orden por columna funciona y una columna inventada se ignora', () => {
+		const asc = almacen.listarClientes('', 1, 50, { clave: 'deuda', direccion: 'asc' })
+		const desc = almacen.listarClientes('', 1, 50, { clave: 'deuda', direccion: 'desc' })
+		const importes = (lista: typeof asc): number[] => lista.map(cliente => cliente.deudaCents)
+		assert.deepEqual(importes(asc), [...importes(asc)].sort((a, b) => a - b), 'deuda ascendente')
+		assert.deepEqual(importes(desc), [...importes(desc)].sort((a, b) => b - a), 'deuda descendente')
+		assert.deepEqual(importes(asc).reverse(), importes(desc), 'invertir da la vuelta a la lista')
+
+		const porNombre = almacen.listarClientes('', 1, 50, { clave: 'nombre', direccion: 'asc' })
+		assert.deepEqual(porNombre.map(c => c.nombre), [...porNombre.map(c => c.nombre)].sort((a, b) => a.localeCompare(b)))
+
+		// Una columna que no existe en la lista blanca cae al orden por defecto, sin romper.
+		const inventada = almacen.listarClientes('', 1, 50, { clave: 'no_existe', direccion: 'desc' } as Orden)
+		const porDefecto = almacen.listarClientes('', 1, 50)
+		assert.deepEqual(inventada.map(c => c.id), porDefecto.map(c => c.id))
+
+		// Las corridas se ordenan por la clave pedida.
+		const corridas = almacen.listarCorridas(50, 1, 0, { clave: 'estado', direccion: 'asc' })
+		assert.ok(corridas.length > 0)
+	})
+
 	it('una corrida con credenciales malas queda registrada como fallida', async () => {
 		const malas = new ClienteApi({ baseUrl: base, usuario: SANDBOX_API_USER.user_name, password: 'no-es-la-clave' })
 		const corrida = await importar({ almacen, api: malas, hoy: HOY, simulacion: false })

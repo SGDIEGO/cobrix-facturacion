@@ -133,6 +133,28 @@ export function layout(input: { title: string; active: string; body: Raw; flash?
 		if (escritorio()) aplicarMovil(false);
 	});
 })();
+
+/* Buscadores con debounce: esperan N ms tras la ultima tecla y envian el formulario.
+   Si el usuario pulsa Enter, se envia de inmediato. Sin JS, el boton Buscar funciona igual. */
+(function () {
+	document.querySelectorAll('input[data-debounce]').forEach(function (input) {
+		var espera = parseInt(input.getAttribute('data-debounce'), 10) || 300;
+		var formulario = input.form;
+		var temporizador = null;
+		if (!formulario) return;
+		input.addEventListener('input', function () {
+			if (temporizador) clearTimeout(temporizador);
+			temporizador = setTimeout(function () {
+				temporizador = null;
+				if (formulario.requestSubmit) formulario.requestSubmit();
+				else formulario.submit();
+			}, espera);
+		});
+		input.addEventListener('keydown', function (e) {
+			if (e.key === 'Enter' && temporizador) { clearTimeout(temporizador); temporizador = null; }
+		});
+	});
+})();
 </script>
 </body>
 </html>`
@@ -271,6 +293,15 @@ dl.facts dd { margin: 0; }
 .leyenda .pill { cursor: default; }
 .leyenda-item { display: inline-flex; align-items: center; gap: 7px; }
 .leyenda-item i { font-size: 12px; }
+
+/* ---------- orden por columna ---------- */
+th.ordenable a { display: inline-flex; gap: 6px; align-items: center; color: inherit; text-transform: inherit; letter-spacing: inherit; }
+th.ordenable a:hover { color: var(--primary-strong); text-decoration: none; }
+th.ordenable .caret { font-size: 10px; opacity: .3; }
+th.ordenable[aria-sort="ascending"] a, th.ordenable[aria-sort="descending"] a { color: var(--primary-strong); }
+th.ordenable[aria-sort="ascending"] .caret, th.ordenable[aria-sort="descending"] .caret { opacity: 1; }
+th.ordenable[aria-sort="ascending"] { background: var(--primary-soft); }
+th.ordenable[aria-sort="descending"] { background: var(--primary-soft); }
 
 /* ---------- paginacion ---------- */
 .paginacion { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; padding: 11px 16px; border-top: 1px solid var(--line); }
