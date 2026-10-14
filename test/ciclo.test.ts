@@ -41,7 +41,12 @@ describe('ciclo completo de la integracion', () => {
 	after(async () => {
 		almacen.cerrar()
 		await api.close()
-		rmSync(dir, { recursive: true, force: true })
+		// En Windows el WAL de SQLite a veces sigue bloqueado un instante: se ignora y listo.
+		try {
+			rmSync(dir, { recursive: true, force: true })
+		} catch {
+			// el directorio temporal lo limpia el sistema
+		}
 	})
 
 	const simular = async (ruta: string, cuerpo: unknown): Promise<Record<string, unknown>> => {
@@ -164,6 +169,27 @@ describe('ciclo completo de la integracion', () => {
 		assert.ok(eventos.includes('factura_pagada'))
 	})
 
+	it('el almacen pagina: sin argumentos trae todo y con pagina y tamano pagina', () => {
+		assert.equal(almacen.listarClientes().length, almacen.contarClientes(), 'sin paginar trae todo')
+		assert.equal(almacen.listarClientes('', 1, 5).length, 5)
+		assert.equal(almacen.listarClientes('', 4, 5).length, 5)
+		assert.equal(almacen.listarClientes('', 5, 5).length, 0, 'pagina fuera de rango no trae nada')
+		assert.equal(almacen.contarClientes('ELENA'), 1)
+		assert.equal(almacen.listarClientes('elena', 1, 5).length, 1, 'la busqueda tambien pagina')
+
+		const otra = new Almacen(join(dir, 'paginacion.sqlite'))
+		const clienteId = otra.crearCliente({ documento: 'V10000000', nombre: 'PAGINADO', tipo: 'natural', email: '', telefono: '' })
+		for (let i = 0; i < 7; i++) {
+			const sufijo = String(1000 + i)
+			otra.guardarContrato({ idExterno: sufijo, clienteId, estado: 'ACTIVO', plan: 'PLAN', precioCents: 1000, sucursal: 'CCS', moneda: 'USD' })
+			otra.crearFactura({ numero: `COB-00000${i}`, idExterno: `9000${i}`, clienteId, contratoExterno: sufijo, periodo: '2026-01', vencimiento: '2026-01-01', corte: '2026-01-01', totalCents: 1000 })
+		}
+		assert.equal(otra.facturasDeCliente(clienteId).length, 7)
+		assert.equal(otra.facturasDeCliente(clienteId, 1, 3).length, 3)
+		assert.equal(otra.facturasDeCliente(clienteId, 3, 3).length, 1, 'la ultima pagina puede quedar corta')
+		assert.equal(otra.contarFacturasCliente(clienteId), 7)
+		otra.cerrar()
+	})
 	it('una corrida con credenciales malas queda registrada como fallida', async () => {
 		const malas = new ClienteApi({ baseUrl: base, usuario: SANDBOX_API_USER.user_name, password: 'no-es-la-clave' })
 		const corrida = await importar({ almacen, api: malas, hoy: HOY, simulacion: false })

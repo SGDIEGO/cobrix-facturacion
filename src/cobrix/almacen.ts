@@ -201,14 +201,40 @@ export class Almacen {
 				item.resultado, item.motivo, item.montoCents, item.detalle)
 	}
 
-	listarCorridas(limite = 30): Corrida[] {
-		const filas = this.db.prepare('SELECT * FROM corrida ORDER BY id DESC LIMIT ?').all(limite) as unknown as FilaCorrida[]
+	listarCorridas(limite = 30, pagina = 1, tamano = 0): Corrida[] {
+		const consulta = tamano > 0
+			? 'SELECT * FROM corrida ORDER BY id DESC LIMIT ? OFFSET ?'
+			: 'SELECT * FROM corrida ORDER BY id DESC LIMIT ?'
+		const args = tamano > 0 ? [tamano, (pagina - 1) * tamano] : [limite]
+		const filas = this.db.prepare(consulta).all(...args) as unknown as FilaCorrida[]
 		return filas.map(fila => ({
 			id: fila.id, tipo: fila.tipo as TipoCorrida, simulacion: fila.simulacion === 1,
 			estado: fila.estado === 'FALLIDA' ? 'FALLIDA' : 'COMPLETADA',
 			iniciadaEn: fila.iniciada_en, terminadaEn: fila.terminada_en,
 			resumen: leerContadores(fila.resumen), error: fila.error,
 		}))
+	}
+
+	contarCorridas(): number {
+		const fila = this.db.prepare('SELECT COUNT(*) AS n FROM corrida').get() as unknown as Record<string, unknown>
+		return Number(fila.n)
+	}
+
+	itemsDeCorrida(id: number, pagina = 1, tamano = 0): CorridaItem[] {
+		const consulta = `SELECT * FROM corrida_item WHERE corrida_id = ? ORDER BY id ${tamano > 0 ? 'LIMIT ? OFFSET ?' : ''}`
+		const args = tamano > 0 ? [id, tamano, (pagina - 1) * tamano] : [id]
+		const filas = this.db.prepare(consulta).all(...args) as unknown as FilaItem[]
+		return filas.map(fila => ({
+			id: fila.id, contratoExterno: fila.contrato_externo, cuotaId: fila.cuota_id,
+			clienteDocumento: fila.cliente_documento, clienteNombre: fila.cliente_nombre,
+			resultado: fila.resultado as ResultadoCuota, motivo: fila.motivo,
+			montoCents: fila.monto_cents, detalle: fila.detalle,
+		}))
+	}
+
+	contarItemsCorrida(id: number): number {
+		const fila = this.db.prepare('SELECT COUNT(*) AS n FROM corrida_item WHERE corrida_id = ?').get(id) as unknown as Record<string, unknown>
+		return Number(fila.n)
 	}
 
 	leerCorrida(id: number): Corrida | null {
@@ -220,16 +246,6 @@ export class Almacen {
 			iniciadaEn: fila.iniciada_en, terminadaEn: fila.terminada_en,
 			resumen: leerContadores(fila.resumen), error: fila.error,
 		}
-	}
-
-	itemsDeCorrida(id: number): CorridaItem[] {
-		const filas = this.db.prepare('SELECT * FROM corrida_item WHERE corrida_id = ? ORDER BY id').all(id) as unknown as FilaItem[]
-		return filas.map(fila => ({
-			id: fila.id, contratoExterno: fila.contrato_externo, cuotaId: fila.cuota_id,
-			clienteDocumento: fila.cliente_documento, clienteNombre: fila.cliente_nombre,
-			resultado: fila.resultado as ResultadoCuota, motivo: fila.motivo,
-			montoCents: fila.monto_cents, detalle: fila.detalle,
-		}))
 	}
 
 	ultimasCorridas(): { id: number; tipo: TipoCorrida; estado: string; simulacion: boolean; iniciadaEn: string; resumen: Contadores; error: string }[] {
@@ -325,22 +341,34 @@ export class Almacen {
 		}
 	}
 
-	listarClientes(busqueda = ''): ClienteResumen[] {
+	listarClientes(busqueda = '', pagina = 1, tamano = 0): ClienteResumen[] {
 		const filtro = busqueda.trim() ? '%' + busqueda.trim() + '%' : null
+		const paginado = tamano > 0 ? ' LIMIT ? OFFSET ?' : ''
+		const args = filtro
+			? (tamano > 0 ? [filtro, filtro, tamano, (pagina - 1) * tamano] : [filtro, filtro])
+			: (tamano > 0 ? [tamano, (pagina - 1) * tamano] : [])
 		const filas = this.db.prepare(`SELECT c.id, c.documento, c.nombre, c.tipo,
 			(SELECT COUNT(*) FROM contrato k WHERE k.cliente_id = c.id) AS contratos,
 			(SELECT COUNT(*) FROM factura f WHERE f.cliente_id = c.id AND f.estado = 'ABIERTA') AS abiertas,
 			(SELECT COUNT(*) FROM factura f WHERE f.cliente_id = c.id AND f.estado = 'PAGADA') AS pagadas,
 			(SELECT COALESCE(SUM(f.saldo_cents), 0) FROM factura f WHERE f.cliente_id = c.id AND f.estado = 'ABIERTA') AS deuda,
 			(SELECT MIN(f.vencimiento) FROM factura f WHERE f.cliente_id = c.id AND f.estado = 'ABIERTA') AS mas_antiguo
-			FROM cliente c ${filtro ? 'WHERE c.nombre LIKE ? OR c.documento LIKE ?' : ''} ORDER BY c.nombre`)
-			.all(...(filtro ? [filtro, filtro] : [])) as unknown as Array<Record<string, unknown>>
+			FROM cliente c ${filtro ? 'WHERE c.nombre LIKE ? OR c.documento LIKE ?' : ''} ORDER BY c.nombre${paginado}`)
+			.all(...args) as unknown as Array<Record<string, unknown>>
 		return filas.map(fila => ({
 			id: fila.id as number, documento: String(fila.documento), nombre: String(fila.nombre),
 			tipo: (fila.tipo === 'juridica' ? 'juridica' : 'natural') as ClienteResumen['tipo'],
 			contratos: Number(fila.contratos), abiertas: Number(fila.abiertas), pagadas: Number(fila.pagadas),
 			deudaCents: Number(fila.deuda), vencimientoMasAntiguo: (fila.mas_antiguo as string | null) ?? null,
 		}))
+	}
+
+	contarClientes(busqueda = ''): number {
+		const filtro = busqueda.trim() ? '%' + busqueda.trim() + '%' : null
+		const fila = (filtro
+			? this.db.prepare('SELECT COUNT(*) AS n FROM cliente WHERE nombre LIKE ? OR documento LIKE ?').get(filtro, filtro)
+			: this.db.prepare('SELECT COUNT(*) AS n FROM cliente').get()) as unknown as Record<string, unknown>
+		return Number(fila.n)
 	}
 
 	leerCliente(documento: string): ClienteDetalle | null {
@@ -362,8 +390,10 @@ export class Almacen {
 		}))
 	}
 
-	facturasDeCliente(clienteId: number): FacturaDetalle[] {
-		const filas = this.db.prepare('SELECT * FROM factura WHERE cliente_id = ? ORDER BY periodo DESC, id DESC').all(clienteId) as unknown as FilaFactura[]
+	facturasDeCliente(clienteId: number, pagina = 1, tamano = 0): FacturaDetalle[] {
+		const paginado = tamano > 0 ? ' LIMIT ? OFFSET ?' : ''
+		const args = tamano > 0 ? [clienteId, tamano, (pagina - 1) * tamano] : [clienteId]
+		const filas = this.db.prepare(`SELECT * FROM factura WHERE cliente_id = ? ORDER BY periodo DESC, id DESC${paginado}`).all(...args) as unknown as FilaFactura[]
 		return filas.map(fila => ({
 			id: fila.id, numero: fila.numero, idExterno: fila.id_externo, contratoExterno: fila.contrato_externo,
 			periodo: fila.periodo, vencimiento: fila.vencimiento, corte: fila.corte,
@@ -373,12 +403,24 @@ export class Almacen {
 		}))
 	}
 
-	eventosDeCliente(clienteId: number): Evento[] {
-		const filas = this.db.prepare('SELECT * FROM evento WHERE cliente_id = ? ORDER BY id DESC').all(clienteId) as unknown as Array<Record<string, unknown>>
+	contarFacturasCliente(clienteId: number): number {
+		const fila = this.db.prepare('SELECT COUNT(*) AS n FROM factura WHERE cliente_id = ?').get(clienteId) as unknown as Record<string, unknown>
+		return Number(fila.n)
+	}
+
+	eventosDeCliente(clienteId: number, pagina = 1, tamano = 0): Evento[] {
+		const paginado = tamano > 0 ? ' LIMIT ? OFFSET ?' : ''
+		const args = tamano > 0 ? [clienteId, tamano, (pagina - 1) * tamano] : [clienteId]
+		const filas = this.db.prepare(`SELECT * FROM evento WHERE cliente_id = ? ORDER BY id DESC${paginado}`).all(...args) as unknown as Array<Record<string, unknown>>
 		return filas.map(fila => ({
 			id: fila.id as number, tipo: fila.tipo as Evento['tipo'], fecha: String(fila.fecha),
 			detalle: String(fila.detalle),
 		}))
+	}
+
+	contarEventosCliente(clienteId: number): number {
+		const fila = this.db.prepare('SELECT COUNT(*) AS n FROM evento WHERE cliente_id = ?').get(clienteId) as unknown as Record<string, unknown>
+		return Number(fila.n)
 	}
 
 	clientesConCuotasVencidas(hoy: string): { documento: string; nombre: string; deudaCents: number; vencidas: number }[] {
