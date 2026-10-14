@@ -53,7 +53,7 @@ const NAV = [
 	['/configuracion', 'Configuración'],
 ] as const
 
-export function layout(input: { title: string; active: string; body: Raw; flash?: { tone: Tone; text: string } | undefined; company: string }): string {
+export function layout(input: { title: string; active: string; body: Raw; flash?: { tone: Tone; text: string; html?: Raw } | undefined; company: string }): string {
 	return `<!doctype html>
 <html lang="es">
 <head>
@@ -70,7 +70,7 @@ export function layout(input: { title: string; active: string; body: Raw; flash?
 		<div class="side-foot">${esc(input.company)}</div>
 	</aside>
 	<main class="main">
-		${input.flash ? `<div class="flash ${input.flash.tone}" role="status">${esc(input.flash.text)}</div>` : ''}
+		${input.flash ? `<div class="flash ${input.flash.tone}" role="status">${input.flash.html ? input.flash.html.html : esc(input.flash.text)}</div>` : ''}
 		${input.body.html}
 	</main>
 </div>

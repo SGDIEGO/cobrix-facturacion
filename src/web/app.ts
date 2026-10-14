@@ -45,6 +45,8 @@ function apiDe(almacen: Almacen, urlBase: string): ClienteApi {
 interface Flash {
 	readonly tone: Tone
 	readonly text: string
+	/** Texto con enlaces ya escapados, para errores accionables. */
+	readonly html?: Raw
 }
 
 export function createApp(deps: AppDeps): Server {
@@ -98,11 +100,25 @@ export function createApp(deps: AppDeps): Server {
 
 		const cuerpo = totales.clientes === 0
 			? html`
+				<section class="tiles">${tiles.map(tile => html`
+					<a class="tile" href="${tile.href}"><span>${tile.label}</span><strong>${tile.valor}</strong></a>`)}
+				</section>
 				<section class="card"><div class="body">
 					<div class="empty">
 						<h3>Aun no hay clientes importados</h3>
-						<p>Conecta el proveedor en <a href="/configuracion">Configuracion</a> y despues corre
-						<a href="/sincronizacion">Importar</a> para traer los clientes y las facturas del administrador.</p>
+						<p>Conecta el proveedor en <a href="/configuracion">Configuracion</a> (pulsa <em>Probar conexion</em>)
+						y despues importa. Puedes empezar por <em>Simular importacion</em> para ver cuantas cuotas entrarian sin escribir nada.</p>
+						<div class="acciones">
+							<form method="post" action="/acciones/importar" onsubmit="return confirm('Importar clientes y facturas nuevas desde el administrador?')">
+								<button class="btn primary" type="submit">Importar</button>
+							</form>
+							<form method="post" action="/acciones/simular-importar">
+								<button class="btn" type="submit">Simular importacion</button>
+							</form>
+							<form method="post" action="/acciones/pagadas">
+								<button class="btn" type="submit">Actualizar pagadas</button>
+							</form>
+						</div>
 					</div>
 				</div></section>`
 			: html`
@@ -156,18 +172,17 @@ export function createApp(deps: AppDeps): Server {
 					</tbody>
 				</table></div>
 			</section>
-			${totales.clientes > 0 ? html`
-				<section class="card"><div class="body">
-					<h2 class="acciones">Acciones rapidas</h2>
-					<div class="acciones">
-						<form method="post" action="/acciones/importar" onsubmit="return confirm('Importar clientes y facturas nuevas desde el administrador?')">
-							<button class="btn primary" type="submit">Importar</button>
-						</form>
-						<form method="post" action="/acciones/pagadas">
-							<button class="btn" type="submit">Actualizar pagadas</button>
-						</form>
-					</div>
-				</div></section>` : ''}`
+			<section class="card"><div class="body">
+				<h2 class="acciones">Acciones rapidas</h2>
+				<div class="acciones">
+					<form method="post" action="/acciones/importar" onsubmit="return confirm('Importar clientes y facturas nuevas desde el administrador?')">
+						<button class="btn primary" type="submit">Importar</button>
+					</form>
+					<form method="post" action="/acciones/pagadas">
+						<button class="btn" type="submit">Actualizar pagadas</button>
+					</form>
+				</div>
+			</div></section>`
 	}
 
 	function resumenCorrida(corrida: { tipo: string; resumen: { importadas: number; yaImportadas: number; marcadasPagadas: number; abonosParciales: number } }): string {
@@ -267,7 +282,7 @@ export function createApp(deps: AppDeps): Server {
 			<section class="card"><header><h2>Facturas</h2></header>
 				<div class="table-wrap"><table>
 					<thead><tr>
-						<th>Numero</th><th>Cuota</th><th>Periodo</th><th>Vencimiento</th><th>Corte</th>
+						<th>Numero</th><th>Cuota</th><th>Contrato</th><th>Periodo</th><th>Vencimiento</th><th>Corte</th>
 						<th class="num">Total</th><th class="num">Saldo</th><th>Estado</th>
 					</tr></thead>
 					<tbody>${facturas.length === 0
@@ -276,6 +291,7 @@ export function createApp(deps: AppDeps): Server {
 							<tr>
 								<td class="mono">${esc(factura.numero)}</td>
 								<td class="mono">${esc(factura.idExterno)}</td>
+								<td class="mono">${esc(factura.contratoExterno)}</td>
 								<td>${date(factura.periodo)}</td>
 								<td>${date(factura.vencimiento)}</td>
 								<td>${date(factura.corte)}</td>
@@ -544,7 +560,9 @@ export function createApp(deps: AppDeps): Server {
 				const api = apiDe(almacen, deps.simulatorUrl)
 				const resultado = await importar({ almacen, api, hoy, simulacion })
 				const flash = resultado.estado === 'FALLIDA'
-					? flashNueva('bad', `La corrida fallo: ${resultado.error}`)
+					? flashNueva('bad',
+						`La corrida fallo: ${resultado.error}. Revisa el usuario y la contrasena en Configuracion y vuelve a probar.`,
+						html`La corrida fallo: ${esc(resultado.error)}. Revisa el usuario y la contrasena en ${enlaceConfig('Configuracion')} y vuelve a probar.`)
 					: flashNueva(simulacion ? 'info' : 'ok', mensajeImportacion(resultado))
 				return sendHtml(res, 200, cabecera(simulacion ? 'Importacion simulada' : 'Importacion', '/sincronizacion', detalleCorrida(resultado.corridaId), flash))
 			}
@@ -553,7 +571,9 @@ export function createApp(deps: AppDeps): Server {
 				const api = apiDe(almacen, deps.simulatorUrl)
 				const resultado = await actualizarPagadas({ almacen, api, hoy, simulacion })
 				const flash = resultado.estado === 'FALLIDA'
-					? flashNueva('bad', `La corrida fallo: ${resultado.error}`)
+					? flashNueva('bad',
+						`La corrida fallo: ${resultado.error}. Confirma que la API del administrador este levantada y que las credenciales de Configuracion sean validas.`,
+						html`La corrida fallo: ${esc(resultado.error)}. Confirma que la API del administrador este levantada y que las credenciales de ${enlaceConfig('Configuracion')} sean validas.`)
 					: flashNueva(simulacion ? 'info' : 'ok', mensajePagadas(resultado))
 				return sendHtml(res, 200, cabecera(simulacion ? 'Pagadas simuladas' : 'Pagadas', '/sincronizacion', detalleCorrida(resultado.corridaId), flash))
 			}
@@ -563,7 +583,14 @@ export function createApp(deps: AppDeps): Server {
 					const prueba = await api.probarConexion()
 					return sendHtml(res, 200, cabecera('Configuracion', '/configuracion', configuracion(flashNueva('ok', `Conexion correcta: el usuario ${prueba.usuario} ve ${prueba.contratos} contratos.`))))
 				} catch (error) {
-					return sendHtml(res, 200, cabecera('Configuracion', '/configuracion', configuracion(flashNueva('bad', `No se pudo conectar: ${error instanceof Error ? error.message : String(error)}`))))
+					const motivo = error instanceof Error ? error.message : String(error)
+					const consejo = /Contrase/i.test(motivo)
+						? 'Revisa el usuario y la contrasena del administrador.'
+						: /conexion|network|fetch|solicitud/i.test(motivo)
+							? 'Confirma que la URL responda y que la API este levantada.'
+							: 'Guarda la URL, el usuario y la contrasena antes de probar la conexion.'
+					const htmlMotivo = html`No se pudo conectar: ${esc(motivo)}. ${esc(consejo)}`
+					return sendHtml(res, 200, cabecera('Configuracion', '/configuracion', configuracion(flashNueva('bad', `No se pudo conectar: ${motivo}. ${consejo}`, htmlMotivo))))
 				}
 			}
 			if (path === '/configuracion') {
@@ -598,9 +625,12 @@ export function createApp(deps: AppDeps): Server {
 	})
 }
 
-function flashNueva(tone: Tone, text: string): Flash {
-	return { tone, text }
+function flashNueva(tone: Tone, text: string, html?: Raw | undefined): Flash {
+	return { tone, text, html }
 }
+
+/** Enlace accionable dentro de un flash de error. */
+const enlaceConfig = (texto: string): Raw => html`<a href="/configuracion">${esc(texto)}</a>`
 
 function mensajeImportacion(resultado: { simulacion: boolean; contadores: { importadas: number; yaImportadas: number; clientesNuevos: number; montoImportadoCents: number } }): string {
 	const r = resultado.contadores
