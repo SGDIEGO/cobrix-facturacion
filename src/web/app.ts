@@ -20,7 +20,7 @@ import { today } from '../shared/dates.ts'
 import { configDesdeFormulario, describirConfig, empresaDesdeFormulario, proveedorDesdeFormulario } from '../cobrix/formularios.ts'
 import type { ResultadoCuota } from '../cobrix/tipos.ts'
 import { clavesOrden, leerOrden, orderDe, type Direccion, type Orden, type TablaOrden } from '../cobrix/orden.ts'
-import { CSS, dateTime, date, esc, icon, html, layout, pill, usd, type Raw, type Tone } from './layout.ts'
+import { CSS, dateTime, date, esc, icon, html, layout, pill, raw, usd, type Raw, type Tone } from './layout.ts'
 
 export interface AppDeps {
 	/** El administrador de facturas simulado (mismo proceso, pero se habla por HTTP). */
@@ -36,8 +36,13 @@ const TAMANOS = [20, 25, 50]
 const TAMANO_POR_DEFECTO = 20
 
 let almacenGlobal: Almacen | null = null
+let almacenRuta: string | null = null
 function almacenDe(deps: AppDeps): Almacen {
-	if (!almacenGlobal) almacenGlobal = new Almacen(deps.almacenPath ?? 'data/cobrix.sqlite')
+	const ruta = deps.almacenPath ?? 'data/cobrix.sqlite'
+	if (almacenGlobal && almacenRuta === ruta) return almacenGlobal
+	almacenGlobal?.cerrar()
+	almacenGlobal = new Almacen(ruta)
+	almacenRuta = ruta
 	return almacenGlobal
 }
 
@@ -123,8 +128,27 @@ function controlesPaginacion(base: string, buscar: URLSearchParams, info: Pagina
 		</div>`
 }
 
-const TIPOS_MIME: Record<string, string> = {
-	'.css': 'text/css; charset=utf-8',
+/** Resultados que se pueden filtrar en el detalle de una corrida. */
+const RESULTADOS_FILTRO = [
+	{ clave: 'importada', etiqueta: 'Importadas' },
+	{ clave: 'ya_importada', etiqueta: 'Ya importadas' },
+	{ clave: 'marcada_pagada', etiqueta: 'Marcadas pagadas' },
+	{ clave: 'reabierta', etiqueta: 'Reabiertas por anulacion' },
+	{ clave: 'abono_parcial', etiqueta: 'Abonos parciales' },
+	{ clave: 'exonerada', etiqueta: 'Exoneradas' },
+	{ clave: 'sin_evidencia', etiqueta: 'Sin evidencia' },
+	{ clave: 'pendiente_libro', etiqueta: 'Siguen pendientes' },
+	{ clave: 'excluida_estado', etiqueta: 'Excluidas por estado' },
+	{ clave: 'fuera_ventana', etiqueta: 'Fuera de ventana' },
+	{ clave: 'frenada_tope', etiqueta: 'Frenadas por tope' },
+	{ clave: 'limite_recientes', etiqueta: 'Fuera de recientes' },
+	{ clave: 'sin_deuda', etiqueta: 'Sin deuda' },
+	{ clave: 'saldo_residual', etiqueta: 'Saldo residual' },
+	{ clave: 'moneda_incoherente', etiqueta: 'Moneda incoherente' },
+	{ clave: 'contradiccion', etiqueta: 'Contradiccion' },
+] as const
+
+const TIPOS_MIME: Record<string, string> = {	'.css': 'text/css; charset=utf-8',
 	'.woff2': 'font/woff2',
 	'.woff': 'font/woff',
 	'.ttf': 'font/ttf',
@@ -155,6 +179,12 @@ export function createApp(deps: AppDeps): Server {
 		res.end(body)
 	}
 
+	/** POST -> Redirect -> GET: la URL queda limpia y F5 no repite la corrida. */
+	function redirigir(res: ServerResponse, destino: string): void {
+		res.writeHead(303, { location: destino })
+		res.end()
+	}
+
 	function leerCuerpo(req: IncomingMessage): Promise<Record<string, string | undefined>> {
 		return new Promise((resolver, rechazar) => {
 			const trozos: Buffer[] = []
@@ -178,11 +208,15 @@ export function createApp(deps: AppDeps): Server {
 	/**
 	 * Cabecera de columna ordenable. El estado va en la URL (`orden` + `direccion`), asi que
 	 * funciona sin JavaScript y sobrevive a la paginacion.
+	 *
+	 * El enlace es ABSOLUTO (lleva la ruta base): si no, tras un POST a `/acciones/...` el
+	 * navegador resolveria `?orden=` contra esa ruta y daria 404.
 	 */
 	function thOrden(opciones: {
 		tabla: TablaOrden
 		clave: string
 		etiqueta: string
+		base: string
 		buscar: URLSearchParams
 		orden: Orden
 		numerica?: boolean
@@ -195,7 +229,7 @@ export function createApp(deps: AppDeps): Server {
 		params.set('orden', opciones.clave)
 		params.set('direccion', siguiente)
 		params.delete('pagina')
-		const href = `?${params.toString()}`
+		const href = `${opciones.base}?${params.toString()}`
 		const glifo = !activa ? 'sort' : opciones.orden.direccion === 'asc' ? 'sort-up' : 'sort-down'
 		const ariaSort = !activa ? 'none' : opciones.orden.direccion === 'asc' ? 'ascending' : 'descending'
 		const titulo = activa
@@ -277,9 +311,9 @@ export function createApp(deps: AppDeps): Server {
 					<header><h2>${icon('hand-holding-dollar')}Cobro pendiente</h2><a class="btn small" href="/clientes">Ver clientes</a></header>
 					<div class="table-wrap"><table>
 						<thead><tr>
-							${thOrden({ tabla: 'deudores', clave: 'cliente', etiqueta: 'Cliente', buscar: new URLSearchParams(), orden: ordenDeudores })}
-							${thOrden({ tabla: 'deudores', clave: 'vencidas', etiqueta: 'Vencidas', buscar: new URLSearchParams(), orden: ordenDeudores, numerica: true })}
-							${thOrden({ tabla: 'deudores', clave: 'deuda', etiqueta: 'Deuda', buscar: new URLSearchParams(), orden: ordenDeudores, numerica: true })}
+							${thOrden({ tabla: 'deudores', clave: 'cliente', etiqueta: 'Cliente', base: '/', buscar, orden: ordenDeudores })}
+							${thOrden({ tabla: 'deudores', clave: 'vencidas', etiqueta: 'Vencidas', base: '/', buscar, orden: ordenDeudores, numerica: true })}
+							${thOrden({ tabla: 'deudores', clave: 'deuda', etiqueta: 'Deuda', base: '/', buscar, orden: ordenDeudores, numerica: true })}
 						</tr></thead>
 						<tbody>${deudores.map(deudor => html`
 							<tr><td><a href="/clientes/${encodeURIComponent(deudor.documento)}">${esc(deudor.nombre)}</a></td>
@@ -350,14 +384,14 @@ export function createApp(deps: AppDeps): Server {
 				<header><h2>${icon('users')}Clientes</h2><span class="muted">${total} en total</span></header>
 				<div class="table-wrap"><table>
 					<thead><tr>
-						${thOrden({ tabla: 'clientes', clave: 'nombre', etiqueta: 'Nombre', buscar, orden })}
-						${thOrden({ tabla: 'clientes', clave: 'documento', etiqueta: 'Documento', buscar, orden })}
-						${thOrden({ tabla: 'clientes', clave: 'tipo', etiqueta: 'Tipo', buscar, orden })}
-						${thOrden({ tabla: 'clientes', clave: 'contratos', etiqueta: 'Contratos', buscar, orden, numerica: true })}
-						${thOrden({ tabla: 'clientes', clave: 'abiertas', etiqueta: 'Abiertas', buscar, orden, numerica: true })}
-						${thOrden({ tabla: 'clientes', clave: 'pagadas', etiqueta: 'Pagadas', buscar, orden, numerica: true })}
-						${thOrden({ tabla: 'clientes', clave: 'deuda', etiqueta: 'Deuda', buscar, orden, numerica: true })}
-						${thOrden({ tabla: 'clientes', clave: 'vence_antiguo', etiqueta: 'Vence la mas antigua', buscar, orden })}
+						${thOrden({ tabla: 'clientes', clave: 'nombre', etiqueta: 'Nombre', base: '/clientes', buscar, orden })}
+						${thOrden({ tabla: 'clientes', clave: 'documento', etiqueta: 'Documento', base: '/clientes', buscar, orden })}
+						${thOrden({ tabla: 'clientes', clave: 'tipo', etiqueta: 'Tipo', base: '/clientes', buscar, orden })}
+						${thOrden({ tabla: 'clientes', clave: 'contratos', etiqueta: 'Contratos', base: '/clientes', buscar, orden, numerica: true })}
+						${thOrden({ tabla: 'clientes', clave: 'abiertas', etiqueta: 'Abiertas', base: '/clientes', buscar, orden, numerica: true })}
+						${thOrden({ tabla: 'clientes', clave: 'pagadas', etiqueta: 'Pagadas', base: '/clientes', buscar, orden, numerica: true })}
+						${thOrden({ tabla: 'clientes', clave: 'deuda', etiqueta: 'Deuda', base: '/clientes', buscar, orden, numerica: true })}
+						${thOrden({ tabla: 'clientes', clave: 'vence_antiguo', etiqueta: 'Vence la mas antigua', base: '/clientes', buscar, orden })}
 					</tr></thead>
 					<tbody>${lista.length === 0
 						? html`<tr class="empty-row"><td colspan="8">${busqueda ? `Ningun cliente coincide con "${esc(busqueda)}". Prueba con menos letras o busca por documento.` : 'Aun no hay clientes. Corre una importacion para traerlos.'}</td></tr>`
@@ -388,6 +422,7 @@ export function createApp(deps: AppDeps): Server {
 				<a href="/clientes">Volver a Clientes</a>.</p></div>`
 		}
 		const contratos = almacen.contratosDeCliente(cliente.id, leerOrden(buscar, clavesOrden('contratos'), 'id', 'asc'))
+		const baseExpediente = `/clientes/${encodeURIComponent(cliente.documento)}`
 		const totalFacturas = almacen.contarFacturasCliente(cliente.id)
 		const totalEventos = almacen.contarEventosCliente(cliente.id)
 		const tamano = Math.max(1, Number(buscar.get('tamano')) || TAMANO_POR_DEFECTO)
@@ -425,11 +460,11 @@ export function createApp(deps: AppDeps): Server {
 				<section class="card"><header><h2>${icon('file-contract')}Contratos en el administrador</h2></header>
 					<div class="table-wrap"><table>
 						<thead><tr>
-							${thOrden({ tabla: 'contratos', clave: 'id', etiqueta: 'Contrato', buscar, orden: ordenContratos })}
-							${thOrden({ tabla: 'contratos', clave: 'estado', etiqueta: 'Estado', buscar, orden: ordenContratos })}
-							${thOrden({ tabla: 'contratos', clave: 'plan', etiqueta: 'Plan', buscar, orden: ordenContratos })}
-							${thOrden({ tabla: 'contratos', clave: 'sucursal', etiqueta: 'Sucursal', buscar, orden: ordenContratos })}
-							${thOrden({ tabla: 'contratos', clave: 'precio', etiqueta: 'Precio', buscar, orden: ordenContratos, numerica: true })}
+							${thOrden({ tabla: 'contratos', clave: 'id', etiqueta: 'Contrato', base: baseExpediente, buscar, orden: ordenContratos })}
+							${thOrden({ tabla: 'contratos', clave: 'estado', etiqueta: 'Estado', base: baseExpediente, buscar, orden: ordenContratos })}
+							${thOrden({ tabla: 'contratos', clave: 'plan', etiqueta: 'Plan', base: baseExpediente, buscar, orden: ordenContratos })}
+							${thOrden({ tabla: 'contratos', clave: 'sucursal', etiqueta: 'Sucursal', base: baseExpediente, buscar, orden: ordenContratos })}
+							${thOrden({ tabla: 'contratos', clave: 'precio', etiqueta: 'Precio', base: baseExpediente, buscar, orden: ordenContratos, numerica: true })}
 						</tr></thead>
 						<tbody>${contratos.length === 0
 							? html`<tr class="empty-row"><td colspan="5" class="muted">Sin contratos importados.</td></tr>`
@@ -446,16 +481,16 @@ export function createApp(deps: AppDeps): Server {
 			<section class="card"><header><h2>${icon('file-invoice-dollar')}Facturas</h2><span class="muted">Una factura por cuota del administrador</span></header>
 				<div class="table-wrap"><table>
 					<thead><tr>
-						${thOrden({ tabla: 'facturas', clave: 'numero', etiqueta: 'Numero', buscar, orden: ordenFacturas })}
-						${thOrden({ tabla: 'facturas', clave: 'cuota', etiqueta: 'Cuota', buscar, orden: ordenFacturas })}
-						${thOrden({ tabla: 'facturas', clave: 'contrato', etiqueta: 'Contrato', buscar, orden: ordenFacturas })}
-						${thOrden({ tabla: 'facturas', clave: 'periodo', etiqueta: 'Periodo', buscar, orden: ordenFacturas })}
-						${thOrden({ tabla: 'facturas', clave: 'vencimiento', etiqueta: 'Vencimiento', buscar, orden: ordenFacturas })}
-						${thOrden({ tabla: 'facturas', clave: 'corte', etiqueta: 'Corte', buscar, orden: ordenFacturas })}
-						${thOrden({ tabla: 'facturas', clave: 'total', etiqueta: 'Total', buscar, orden: ordenFacturas, numerica: true })}
-						${thOrden({ tabla: 'facturas', clave: 'saldo', etiqueta: 'Saldo', buscar, orden: ordenFacturas, numerica: true })}
-						${thOrden({ tabla: 'facturas', clave: 'estado', etiqueta: 'Estado', buscar, orden: ordenFacturas })}
-						${thOrden({ tabla: 'facturas', clave: 'pagada', etiqueta: 'Pagada', buscar, orden: ordenFacturas })}
+						${thOrden({ tabla: 'facturas', clave: 'numero', etiqueta: 'Numero', base: baseExpediente, buscar, orden: ordenFacturas })}
+						${thOrden({ tabla: 'facturas', clave: 'cuota', etiqueta: 'Cuota', base: baseExpediente, buscar, orden: ordenFacturas })}
+						${thOrden({ tabla: 'facturas', clave: 'contrato', etiqueta: 'Contrato', base: baseExpediente, buscar, orden: ordenFacturas })}
+						${thOrden({ tabla: 'facturas', clave: 'periodo', etiqueta: 'Periodo', base: baseExpediente, buscar, orden: ordenFacturas })}
+						${thOrden({ tabla: 'facturas', clave: 'vencimiento', etiqueta: 'Vencimiento', base: baseExpediente, buscar, orden: ordenFacturas })}
+						${thOrden({ tabla: 'facturas', clave: 'corte', etiqueta: 'Corte', base: baseExpediente, buscar, orden: ordenFacturas })}
+						${thOrden({ tabla: 'facturas', clave: 'total', etiqueta: 'Total', base: baseExpediente, buscar, orden: ordenFacturas, numerica: true })}
+						${thOrden({ tabla: 'facturas', clave: 'saldo', etiqueta: 'Saldo', base: baseExpediente, buscar, orden: ordenFacturas, numerica: true })}
+						${thOrden({ tabla: 'facturas', clave: 'estado', etiqueta: 'Estado', base: baseExpediente, buscar, orden: ordenFacturas })}
+						${thOrden({ tabla: 'facturas', clave: 'pagada', etiqueta: 'Pagada', base: baseExpediente, buscar, orden: ordenFacturas })}
 					</tr></thead>
 					<tbody>${facturas.length === 0
 						? html`<tr class="empty-row"><td colspan="9">Sin facturas.</td></tr>`
@@ -480,11 +515,18 @@ export function createApp(deps: AppDeps): Server {
 			<section class="card"><header><h2>${icon('clock-rotate-left')}Historial</h2></header><div class="body">
 				<ul class="timeline">${eventos.map(evento => html`
 					<li><time>${dateTime(evento.fecha)}</time>
-					<span>${pill(etiquetaEvento(evento.tipo), evento.tipo === 'factura_pagada' ? 'ok' : 'info')}
+					<span>${pill(etiquetaEvento(evento.tipo), tonoEvento(evento.tipo))}
 					${esc(evento.detalle)}</span></li>`)}
 				</ul>
 				${totalEventos > tamano ? controlesPaginacion(`/clientes/${encodeURIComponent(cliente.documento)}`, buscar, paginaEventos) : ''}
 			</div></section>` : ''}`
+	}
+
+	function tonoEvento(tipo: string): Tone {
+		if (tipo === 'factura_pagada') return 'ok'
+		if (tipo === 'factura_reabierta') return 'bad'
+		if (tipo === 'factura_abono') return 'warn'
+		return 'info'
 	}
 
 	function estadoContrato(estado: string): Tone {
@@ -496,7 +538,9 @@ export function createApp(deps: AppDeps): Server {
 	function etiquetaEvento(tipo: string): string {
 		if (tipo === 'cliente_creado') return 'cliente creado'
 		if (tipo === 'factura_importada') return 'factura importada'
-		return 'pagada en el ISP'
+		if (tipo === 'factura_pagada') return 'pagada en el ISP'
+		if (tipo === 'factura_abono') return 'abono parcial'
+		return 'reabierta'
 	}
 
 	// ---------------------------------------------------------------- Sincronizacion
@@ -509,6 +553,7 @@ export function createApp(deps: AppDeps): Server {
 			['fuera de ventana', 'info', 'la cuota es mas vieja que la ventana elegida'],
 			['frenada por tope', 'info', 'supero el tope de facturas o de monto de la corrida'],
 			['marcada pagada', 'ok', 'el ISP la cobro por completo'],
+			['reabierta', 'bad', 'el ISP anulo o reverso el cobro: vuelve a deber'],
 			['abono parcial', 'warn', 'hay algo pagado, pero sigue debiendo'],
 			['exonerada', 'mute', 'saldo 0 sin pago: no es un pago'],
 			['sin evidencia', 'bad', 'no aparece en el libro: nunca se marca pagada'],
@@ -555,11 +600,11 @@ export function createApp(deps: AppDeps): Server {
 			<section class="card"><header><h2>${icon('clock-rotate-left')}Corridas</h2><span class="muted">${total} en total</span></header>
 				<div class="table-wrap"><table>
 					<thead><tr>
-						${thOrden({ tabla: 'corridas', clave: 'id', etiqueta: '#', buscar, orden })}
-						${thOrden({ tabla: 'corridas', clave: 'tipo', etiqueta: 'Tipo', buscar, orden })}
-						${thOrden({ tabla: 'corridas', clave: 'inicio', etiqueta: 'Inicio', buscar, orden })}
-						${thOrden({ tabla: 'corridas', clave: 'simulacion', etiqueta: 'Simulacion', buscar, orden })}
-						${thOrden({ tabla: 'corridas', clave: 'estado', etiqueta: 'Estado', buscar, orden })}
+						${thOrden({ tabla: 'corridas', clave: 'id', etiqueta: '#', base: '/sincronizacion', buscar, orden })}
+						${thOrden({ tabla: 'corridas', clave: 'tipo', etiqueta: 'Tipo', base: '/sincronizacion', buscar, orden })}
+						${thOrden({ tabla: 'corridas', clave: 'inicio', etiqueta: 'Inicio', base: '/sincronizacion', buscar, orden })}
+						${thOrden({ tabla: 'corridas', clave: 'simulacion', etiqueta: 'Simulacion', base: '/sincronizacion', buscar, orden })}
+						${thOrden({ tabla: 'corridas', clave: 'estado', etiqueta: 'Estado', base: '/sincronizacion', buscar, orden })}
 						<th>Resultado</th>
 						<th></th>
 					</tr></thead>
@@ -586,11 +631,24 @@ export function createApp(deps: AppDeps): Server {
 		if (!corrida) {
 			return html`<div class="empty"><h3>${icon('circle-question')}Corrida no encontrada</h3><a href="/sincronizacion">Volver</a></div>`
 		}
-		const total = almacen.contarItemsCorrida(id)
+		const baseDetalle = `/sincronizacion/${id}`
 		const tamano = Math.max(1, Number(buscar.get('tamano')) || TAMANO_POR_DEFECTO)
-		const info = pagina(Number(buscar.get('pagina')) || 1, tamano, total)
 		const orden = leerOrden(buscar, clavesOrden('items'), 'id', 'asc')
-		const items = almacen.itemsDeCorrida(id, info.numero, info.tamano, orden)
+
+		// Filtros del detalle: texto libre y por resultado. Se filtran en memoria sobre la
+		// corrida completa (unas decenas de filas) y despues se pagina.
+		const texto = (buscar.get('q') ?? '').trim().toLowerCase()
+		const soloResultado = (buscar.get('resultado') ?? '').trim()
+		let items = almacen.itemsDeCorrida(id)
+		if (texto) {
+			items = items.filter(item => [item.clienteNombre, item.clienteDocumento, item.cuotaId, item.contratoExterno, item.resultado, item.motivo]
+				.some(campo => campo.toLowerCase().includes(texto)))
+		}
+		if (soloResultado && soloResultado !== 'todos') items = items.filter(item => item.resultado === soloResultado)
+
+		const info = pagina(Number(buscar.get('pagina')) || 1, tamano, items.length)
+		const visibles = items.slice((info.numero - 1) * info.tamano, info.numero * info.tamano)
+		const hayFiltro = texto !== '' || (soloResultado !== '' && soloResultado !== 'todos')
 		const r = corrida.resumen
 		const esPagadas = corrida.tipo === 'PAGADAS'
 		const contadores: Array<{ label: string; icono: string; valor: number; destacado?: boolean; dinero?: boolean }> = esPagadas
@@ -599,6 +657,7 @@ export function createApp(deps: AppDeps): Server {
 				{ label: 'Marcadas pagadas', icono: 'circle-check', valor: r.marcadasPagadas, destacado: true },
 				{ label: 'Abonos parciales', icono: 'circle-half-stroke', valor: r.abonosParciales },
 				{ label: 'Siguen pendientes', icono: 'clock', valor: r.excluidas },
+				{ label: 'Reabiertas', icono: 'rotate-left', valor: r.reabiertas, destacado: r.reabiertas > 0 },
 			]
 			: [
 				{ label: 'Cuotas revisadas', icono: 'list-check', valor: r.cuotasRevisadas },
@@ -618,20 +677,32 @@ export function createApp(deps: AppDeps): Server {
 				<div class="tile ${c.destacado ? 'featured' : ''}"><span>${icon(c.icono)}${c.label}</span><strong>${c.dinero ? usd(c.valor) : c.valor}</strong></div>`)}
 			</section>
 			<section class="card">
-				<header><h2>${icon('list-check')}Cuota por cuota</h2><span class="muted">${total} filas</span></header>
-				<div class="body">${leyendaResultados()}</div>
+				<header><h2>${icon('list-check')}Cuota por cuota</h2><span class="muted">${items.length} filas${hayFiltro ? ' (filtradas)' : ''}</span></header>
+				<div class="body">
+					<form class="filtros" method="get" action="${baseDetalle}">
+						<input type="search" name="q" value="${esc(texto)}" placeholder="Cliente, cuota, resultado o motivo" aria-label="Filtrar el detalle" data-debounce="300">
+						<select name="resultado" aria-label="Filtrar por resultado" onchange="this.form.submit()">
+							<option value="todos" ${soloResultado === '' || soloResultado === 'todos' ? 'selected' : ''}>Todos los resultados</option>
+							${RESULTADOS_FILTRO.map(valor => html`<option value="${valor.clave}" ${soloResultado === valor.clave ? 'selected' : ''}>${valor.etiqueta}</option>`)}
+						</select>
+						<button class="btn" type="submit">${icon('filter')}Filtrar</button>
+						${hayFiltro ? html`<a class="btn" href="${baseDetalle}">${icon('xmark')}Quitar filtros</a>` : ''}
+						<input type="hidden" name="tamano" value="${info.tamano}">
+					</form>
+					${leyendaResultados()}
+				</div>
 				<div class="table-wrap"><table>
 					<thead><tr>
-						${thOrden({ tabla: 'items', clave: 'contrato', etiqueta: 'Contrato', buscar, orden })}
-						${thOrden({ tabla: 'items', clave: 'cuota', etiqueta: 'Cuota', buscar, orden })}
-						${thOrden({ tabla: 'items', clave: 'cliente', etiqueta: 'Cliente', buscar, orden })}
-						${thOrden({ tabla: 'items', clave: 'monto', etiqueta: 'Monto', buscar, orden, numerica: true })}
-						${thOrden({ tabla: 'items', clave: 'resultado', etiqueta: 'Resultado', buscar, orden })}
-						${thOrden({ tabla: 'items', clave: 'motivo', etiqueta: 'Motivo', buscar, orden })}
+						${thOrden({ tabla: 'items', clave: 'contrato', etiqueta: 'Contrato', base: baseDetalle, buscar, orden })}
+						${thOrden({ tabla: 'items', clave: 'cuota', etiqueta: 'Cuota', base: baseDetalle, buscar, orden })}
+						${thOrden({ tabla: 'items', clave: 'cliente', etiqueta: 'Cliente', base: baseDetalle, buscar, orden })}
+						${thOrden({ tabla: 'items', clave: 'monto', etiqueta: 'Monto', base: baseDetalle, buscar, orden, numerica: true })}
+						${thOrden({ tabla: 'items', clave: 'resultado', etiqueta: 'Resultado', base: baseDetalle, buscar, orden })}
+						${thOrden({ tabla: 'items', clave: 'motivo', etiqueta: 'Motivo', base: baseDetalle, buscar, orden })}
 					</tr></thead>
-					<tbody>${items.length === 0
-						? html`<tr class="empty-row"><td colspan="6">Sin detalle.</td></tr>`
-						: items.map(item => html`
+					<tbody>${visibles.length === 0
+						? html`<tr class="empty-row"><td colspan="6">${hayFiltro ? 'Ninguna fila coincide con el filtro. Prueba con otro texto o quita los filtros.' : 'Sin detalle.'}</td></tr>`
+						: visibles.map(item => html`
 							<tr>
 								<td class="mono">${esc(item.contratoExterno)}</td>
 								<td class="mono">${esc(item.cuotaId)}</td>
@@ -648,6 +719,7 @@ export function createApp(deps: AppDeps): Server {
 
 	function etiquetaResultado(resultado: ResultadoCuota): string {
 		if (resultado === 'importada') return 'importada'
+		if (resultado === 'reabierta') return 'reabierta'
 		if (resultado === 'ya_importada') return 'ya importada'
 		if (resultado === 'marcada_pagada') return 'marcada pagada'
 		if (resultado === 'abono_parcial') return 'abono parcial'
@@ -663,6 +735,7 @@ export function createApp(deps: AppDeps): Server {
 
 	function tonoResultado(resultado: ResultadoCuota): Tone {
 		if (resultado === 'importada' || resultado === 'marcada_pagada') return 'ok'
+		if (resultado === 'reabierta') return 'bad'
 		if (resultado === 'abono_parcial' || resultado === 'ya_importada' || resultado === 'pendiente_contrato') return 'warn'
 		if (resultado === 'sin_evidencia' || resultado === 'contradiccion' || resultado === 'moneda_incoherente') return 'bad'
 		if (resultado === 'frenada_tope' || resultado === 'limite_recientes' || resultado === 'fuera_ventana') return 'info'
@@ -779,7 +852,12 @@ export function createApp(deps: AppDeps): Server {
 			if (path === '/configuracion') return sendHtml(res, 200, cabecera('Configuracion', '/configuracion', configuracion()))
 			if (/^\/sincronizacion\/\d+$/.test(path)) {
 				const id = Number(path.split('/').pop())
-				return sendHtml(res, 200, cabecera('Detalle de corrida', '/sincronizacion', detalleCorrida(id, buscar)))
+				const mensaje = buscar.get('mensaje')
+				const tono = (buscar.get('tono') ?? '') as Tone
+				const flash = mensaje && ['ok', 'bad', 'info', 'warn'].includes(tono)
+					? flashNueva(tono, mensaje, raw(esc(mensaje).replaceAll('Configuracion', '<a href="/configuracion">Configuracion</a>')))
+					: undefined
+				return sendHtml(res, 200, cabecera('Detalle de corrida', '/sincronizacion', detalleCorrida(id, buscar, flash)))
 			}
 			if (/^\/clientes\/[^/]+$/.test(path)) {
 				const documento = decodeURIComponent(path.split('/').pop() ?? '')
@@ -799,7 +877,7 @@ export function createApp(deps: AppDeps): Server {
 						`La corrida fallo: ${resultado.error}. Revisa el usuario y la contrasena en Configuracion y vuelve a probar.`,
 						html`La corrida fallo: ${esc(resultado.error)}. Revisa el usuario y la contrasena en ${enlaceConfig('Configuracion')} y vuelve a probar.`)
 					: flashNueva(simulacion ? 'info' : 'ok', mensajeImportacion(resultado))
-				return sendHtml(res, 200, cabecera(simulacion ? 'Importacion simulada' : 'Importacion', '/sincronizacion', detalleCorrida(resultado.corridaId, new URLSearchParams()), flash))
+				return redirigir(res, `/sincronizacion/${resultado.corridaId}?mensaje=${encodeURIComponent(flash.text)}&tono=${flash.tone}`)
 			}
 			if (path === '/acciones/pagadas' || path === '/acciones/simular-pagadas') {
 				const simulacion = path === '/acciones/simular-pagadas'
@@ -810,7 +888,7 @@ export function createApp(deps: AppDeps): Server {
 						`La corrida fallo: ${resultado.error}. Confirma que la API del administrador este levantada y que las credenciales de Configuracion sean validas.`,
 						html`La corrida fallo: ${esc(resultado.error)}. Confirma que la API del administrador este levantada y que las credenciales de ${enlaceConfig('Configuracion')} sean validas.`)
 					: flashNueva(simulacion ? 'info' : 'ok', mensajePagadas(resultado))
-				return sendHtml(res, 200, cabecera(simulacion ? 'Pagadas simuladas' : 'Pagadas', '/sincronizacion', detalleCorrida(resultado.corridaId, new URLSearchParams()), flash))
+				return redirigir(res, `/sincronizacion/${resultado.corridaId}?mensaje=${encodeURIComponent(flash.text)}&tono=${flash.tone}`)
 			}
 			if (path === '/proveedor/probar') {
 				const api = apiDe(almacen, deps.simulatorUrl)

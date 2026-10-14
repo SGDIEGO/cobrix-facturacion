@@ -72,6 +72,7 @@ describe('ciclo completo de la integracion', () => {
 		const corrida = await importar({ almacen, api: cliente(), hoy: HOY, simulacion: false })
 		assert.equal(corrida.estado, 'COMPLETADA')
 		assert.equal(corrida.contadores.importadas, 42)
+		assert.equal(corrida.contadores.clientesNuevos, 20, 'los clientes nuevos se cuentan por titular, no por factura')
 		const totales = almacen.totales(HOY)
 		assert.equal(totales.clientes, 20)
 		assert.equal(totales.contratos, 21)
@@ -210,6 +211,36 @@ describe('ciclo completo de la integracion', () => {
 		// Las corridas se ordenan por la clave pedida.
 		const corridas = almacen.listarCorridas(50, 1, 0, { clave: 'estado', direccion: 'asc' })
 		assert.ok(corridas.length > 0)
+	})
+
+	it('un cobro anulado por el ISP reabre la factura que Cobrix ya tenia pagada', async () => {
+		const pagadasAntes = almacen.totales(HOY).facturasPagadas
+		const abiertasAntes = almacen.totales(HOY).facturasAbiertas
+		assert.equal(pagadasAntes, 8)
+
+		// 900114 (MIGUEL ANGEL SOTO) tiene 6 cuotas pendientes tras el abono anterior.
+		const pago = await simular('/__sim/pagar', { id_contrato: 900114 })
+		const idFactura = Number(pago.id_factura)
+		assert.ok(idFactura > 0)
+
+		const primera = await actualizarPagadas({ almacen, api: cliente(), hoy: HOY, simulacion: false })
+		assert.equal(primera.contadores.marcadasPagadas, 6)
+		assert.equal(almacen.totales(HOY).facturasPagadas, 14)
+
+		// El ISP anula ese cobro: sus cuotas vuelven a deber.
+		await simular('/__sim/anular', { id_factura: idFactura })
+		const segunda = await actualizarPagadas({ almacen, api: cliente(), hoy: HOY, simulacion: false })
+		assert.equal(segunda.contadores.reabiertas, 6, 'las cuotas de ese cobro se reabren')
+		assert.equal(segunda.contadores.marcadasPagadas, 0)
+		assert.equal(almacen.totales(HOY).facturasPagadas, 8)
+		assert.equal(almacen.totales(HOY).facturasAbiertas, 34)
+
+		// Y la siguiente corrida no cambia nada: es idempotente.
+		const tercera = await actualizarPagadas({ almacen, api: cliente(), hoy: HOY, simulacion: false })
+		assert.equal(tercera.contadores.reabiertas, 0)
+		assert.equal(tercera.contadores.marcadasPagadas, 0)
+		assert.equal(almacen.totales(HOY).facturasPagadas, pagadasAntes)
+		assert.equal(almacen.totales(HOY).facturasAbiertas, abiertasAntes)
 	})
 
 	it('una corrida con credenciales malas queda registrada como fallida', async () => {

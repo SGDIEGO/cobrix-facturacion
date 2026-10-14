@@ -25,6 +25,7 @@ export type ResultadoCuota =
 	| 'sin_periodo'
 	| 'contradiccion'
 	| 'marcada_pagada'
+	| 'reabierta'
 	| 'abono_parcial'
 	| 'exonerada'
 	| 'sin_evidencia'
@@ -96,11 +97,12 @@ export interface Contadores {
 	readonly frenadas: number
 	readonly montoImportadoCents: number
 	readonly clientesNuevos: number
+	readonly reabiertas: number
 }
 
 export const CONTADORES_VACIOS: Contadores = {
 	cuotasRevisadas: 0, importadas: 0, yaImportadas: 0, marcadasPagadas: 0,
-	abonosParciales: 0, excluidas: 0, frenadas: 0, montoImportadoCents: 0, clientesNuevos: 0,
+	abonosParciales: 0, excluidas: 0, frenadas: 0, montoImportadoCents: 0, clientesNuevos: 0, reabiertas: 0,
 }
 
 export interface Corrida {
@@ -175,7 +177,7 @@ export interface FacturaDetalle {
 
 export interface Evento {
 	readonly id: number
-	readonly tipo: 'cliente_creado' | 'factura_importada' | 'factura_pagada'
+	readonly tipo: 'cliente_creado' | 'factura_importada' | 'factura_pagada' | 'factura_abono' | 'factura_reabierta'
 	readonly fecha: string
 	readonly detalle: string
 }

@@ -294,6 +294,12 @@ dl.facts dd { margin: 0; }
 .leyenda-item { display: inline-flex; align-items: center; gap: 7px; }
 .leyenda-item i { font-size: 12px; }
 
+/* ---------- filtros ---------- */
+.filtros { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.filtros input[type=search] { flex: 1 1 220px; min-width: 180px; }
+.filtros select { width: auto; min-width: 190px; }
+.leyenda { margin-top: 2px; }
+
 /* ---------- orden por columna ---------- */
 th.ordenable a { display: inline-flex; gap: 6px; align-items: center; color: inherit; text-transform: inherit; letter-spacing: inherit; }
 th.ordenable a:hover { color: var(--primary-strong); text-decoration: none; }

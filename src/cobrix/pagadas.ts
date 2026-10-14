@@ -75,6 +75,124 @@ export async function actualizarPagadas(opciones: OpcionesPagadas): Promise<Resu
 	}
 }
 
+/** Resultado posible de una factura al compararla con el libro de cuotas. */
+type Veredicto =
+	| { readonly tipo: 'pagada'; readonly facturasIsp: string }
+	| { readonly tipo: 'abono_parcial'; readonly pagadoCents: number; readonly saldoCents: number; readonly facturasIsp: string }
+	| { readonly tipo: 'sigue_pendiente'; readonly saldoCents: number; readonly facturasIsp: string }
+	| { readonly tipo: 'exonerada'; readonly facturasIsp: string }
+	| { readonly tipo: 'sin_evidencia'; readonly motivo: string }
+
+/** Compara una factura de Cobrix con las filas del libro de cuotas del ISP. */
+function evaluarCuota(factura: { id: number; saldo_cents: number }, filas: readonly FilaLibro[]): Veredicto {
+	if (filas.length === 0) return { tipo: 'sin_evidencia', motivo: 'la cuota no aparece en el libro de pagos' }
+
+	const primera = filas[0]!
+	const coherente = filas.every(fila =>
+		fila.periodoCuota === primera.periodoCuota
+		&& Math.round(fila.saldoCuota * 100) === Math.round(primera.saldoCuota * 100)
+		&& Math.round(fila.valorPago * 100) === Math.round(primera.valorPago * 100)
+		&& Math.round(fila.tarifa * 100) === Math.round(primera.tarifa * 100))
+	if (!coherente) return { tipo: 'sin_evidencia', motivo: 'las filas de la cuota no coinciden entre si' }
+
+	const saldoCents = Math.round(primera.saldoCuota * 100)
+	const pagadoCents = Math.round(primera.valorPago * 100)
+	const facturasIsp = [...new Set(filas.filter(fila => fila.facturaId > 0).map(fila => fila.numFactura || String(fila.facturaId)))].join(', ')
+
+	if (saldoCents <= TOLERANCIA_CENTS && pagadoCents > 0) return { tipo: 'pagada', facturasIsp }
+	if (saldoCents <= TOLERANCIA_CENTS) return { tipo: 'exonerada', facturasIsp }
+	if (saldoCents < factura.saldo_cents) return { tipo: 'abono_parcial', pagadoCents, saldoCents, facturasIsp }
+	return { tipo: 'sigue_pendiente', saldoCents, facturasIsp }
+}
+
+/**
+ * Revision de las facturas que Cobrix ya tiene como pagadas: si el ISP anulo el cobro (el
+ * libro vuelve a mostrar saldo), la factura se reabre. Es el camino inverso de
+ * "marcar pagada" y el que hace que una anulacion se refleje en el panel.
+ */
+async function revisarPagadas(
+	almacen: Almacen, api: ClienteApi, desde: string, hasta: string, simulacion: boolean, corridaId: number,
+	periodo: string, contadores: { -readonly [K in keyof Contadores]: Contadores[K] },
+): Promise<void> {
+	const pagadas = almacen.facturasPagadas()
+	if (pagadas.length === 0) return
+	const contratos = [...new Set(pagadas.map(factura => factura.contrato_externo))]
+	const libros = new Map<string, FilaLibro[]>()
+	const pendientes = new Map<string, Set<string>>()
+	const consultados = new Set<string>()
+
+	for (const contrato of contratos) {
+		try {
+			libros.set(contrato, await api.libroCuotas(Number(contrato), desde, hasta))
+		} catch {
+			libros.set(contrato, [])
+		}
+	}
+
+	for (const factura of pagadas) {
+		const filas = (libros.get(factura.contrato_externo) ?? []).filter(fila => fila.cuotaId === Number(factura.id_externo))
+		const veredicto = evaluarCuota(factura, filas)
+
+		if (veredicto.tipo === 'sin_evidencia') {
+			// La cuota del mes en curso puede no figurar en el libro: se consulta el contrato.
+			const esMesEnCurso = factura.periodo >= periodo
+			if (esMesEnCurso && !consultados.has(factura.contrato_externo)) {
+				consultados.add(factura.contrato_externo)
+				try {
+					const cuotas = await api.cuotasContrato(Number(factura.contrato_externo))
+					pendientes.set(factura.contrato_externo, new Set(cuotas.map(cuota => String(cuota.deudaId))))
+				} catch {
+					pendientes.set(factura.contrato_externo, new Set())
+				}
+			}
+			const sigueEnContrato = esMesEnCurso && (pendientes.get(factura.contrato_externo)?.has(factura.id_externo) ?? false)
+			const resultado: ResultadoCuota = sigueEnContrato ? 'pendiente_contrato' : 'sin_evidencia'
+			almacen.registrarItem(corridaId, {
+				contratoExterno: factura.contrato_externo, cuotaId: factura.id_externo,
+				clienteDocumento: factura.cliente_documento, clienteNombre: factura.cliente_nombre,
+				resultado, motivo: sigueEnContrato
+					? 'la cuota sigue pendiente en el contrato: la factura pagada no se reabre'
+					: 'sin evidencia en el libro: la factura pagada se deja como esta',
+				montoCents: factura.saldo_cents, detalle: '',
+			})
+			contadores.cuotasRevisadas += 1
+			continue
+		}
+
+		const esReapertura = veredicto.tipo === 'abono_parcial' || veredicto.tipo === 'sigue_pendiente'
+		if (!esReapertura) {
+			almacen.registrarItem(corridaId, {
+				contratoExterno: factura.contrato_externo, cuotaId: factura.id_externo,
+				clienteDocumento: factura.cliente_documento, clienteNombre: factura.cliente_nombre,
+				resultado: 'marcada_pagada',
+				motivo: 'sigue pagada en el libro de cuotas',
+				montoCents: 0, detalle: '',
+			})
+			contadores.cuotasRevisadas += 1
+			continue
+		}
+
+		const saldo = veredicto.tipo === 'abono_parcial' ? veredicto.saldoCents : veredicto.saldoCents
+		const pagado = veredicto.tipo === 'abono_parcial' ? veredicto.pagadoCents : 0
+		if (!simulacion) almacen.reabrirFactura(factura.id, saldo)
+		almacen.registrarEvento({
+			clienteId: factura.cliente_id, facturaId: factura.id, tipo: 'factura_reabierta',
+			detalle: `el administrador anulo o reverso el cobro de la cuota ${factura.id_externo}: vuelve a deber USD ${(saldo / 100).toFixed(2)}`,
+		})
+		almacen.registrarItem(corridaId, {
+			contratoExterno: factura.contrato_externo, cuotaId: factura.id_externo,
+			clienteDocumento: factura.cliente_documento, clienteNombre: factura.cliente_nombre,
+			resultado: 'reabierta',
+			motivo: veredicto.tipo === 'abono_parcial'
+				? `el cobro se reverso a un abono de USD ${(pagado / 100).toFixed(2)}: la factura se reabre con USD ${(saldo / 100).toFixed(2)}`
+				: `el cobro fue anulado: la factura se reabre con USD ${(saldo / 100).toFixed(2)}`,
+			montoCents: saldo, detalle: veredicto.facturasIsp,
+		})
+		contadores.reabiertas += 1
+		contadores.cuotasRevisadas += 1
+	}
+}
+
 async function correr(
 	almacen: Almacen, api: ClienteApi, hoy: string, simulacion: boolean, corridaId: number, concurrencia: number,
 ): Promise<Contadores> {
@@ -213,15 +331,24 @@ async function correr(
 		contadores.marcadasPagadas = evaluaciones.filter(e => e.pagada).length
 	}
 	for (const evaluacion of evaluaciones) {
-		if (evaluacion.resultado === 'abono_parcial') contadores.abonosParciales += 1
+		if (evaluacion.resultado === 'abono_parcial') {
+			contadores.abonosParciales += 1
+			almacen.registrarEvento({
+				clienteId: evaluacion.clienteId, facturaId: evaluacion.facturaId, tipo: 'factura_abono',
+				detalle: `abono parcial en la cuota ${evaluacion.idExterno}: ${evaluacion.motivo}`,
+			})
+		}
 		if (evaluacion.resultado === 'exonerada' || evaluacion.resultado === 'sin_evidencia'
 			|| evaluacion.resultado === 'pendiente_contrato' || evaluacion.resultado === 'pendiente_libro') contadores.excluidas += 1
 		almacen.registrarItem(corridaId, {
 			contratoExterno: evaluacion.contratoExterno, cuotaId: evaluacion.idExterno,
 			clienteDocumento: evaluacion.clienteDocumento, clienteNombre: evaluacion.clienteNombre,
 			resultado: evaluacion.resultado,
-			motivo: evaluacion.motivo, montoCents: evaluacion.montoCents, detalle: '',
+			motivo: evaluacion.motivo, montoCents: evaluacion.montoCents, detalle: evaluacion.facturasIsp,
 		})
 	}
+
+	// Ademas: las que ya estaban pagadas se revisan por si el administrador anulo el cobro.
+	await revisarPagadas(almacen, api, desde, hasta, simulacion, corridaId, periodo, contadores)
 	return contadores
 }

@@ -28,7 +28,7 @@ describe('entorno de la prueba', () => {
 		seedBillingApi(join(dir, 'billing-api.sqlite'))
 		api = createBillingApiServer(join(dir, 'billing-api.sqlite'))
 		base = `http://127.0.0.1:${await api.listen(0)}`
-		panel = createApp({ simulatorUrl: base, assignmentPath: fileURLToPath(new URL('../docs/ENUNCIADO.md', import.meta.url)) })
+		panel = createApp({ simulatorUrl: base, assignmentPath: fileURLToPath(new URL('../docs/ENUNCIADO.md', import.meta.url)), almacenPath: join(dir, 'panel.sqlite') })
 		await new Promise<void>(resolve => panel.listen(0, '127.0.0.1', resolve))
 		const address = panel.address()
 		panelBase = `http://127.0.0.1:${typeof address === 'object' && address ? address.port : 0}`
@@ -59,6 +59,52 @@ describe('entorno de la prueba', () => {
 				assert.ok(![404, 405].includes(response.status), `${method} ${path}`)
 			}
 		}
+	})
+
+	it('tras una accion el panel redirige a la corrida (F5 no la repite)', async () => {
+		const respuesta = await fetch(`${panelBase}/acciones/simular-importar`, { method: 'POST', body: '', redirect: 'manual' })
+		assert.equal(respuesta.status, 303, 'POST -> Redirect -> GET')
+		assert.match(respuesta.headers.get('location') ?? '', /^\/sincronizacion\/\d+\?mensaje=/)
+	})
+
+	it('los enlaces de orden son absolutos, no relativos', async () => {
+		// Relativos resolverian contra /acciones/... y darian 404 tras sincronizar.
+		const cuerpo = await (await fetch(`${panelBase}/clientes`)).text()
+		assert.doesNotMatch(cuerpo, /<a href="\?orden=/, 'los enlaces de orden deben llevar la ruta')
+		assert.match(cuerpo, /href="\/clientes\?orden=/)
+	})
+
+	it('configurar, importar y filtrar el detalle de una corrida', async () => {
+		const formulario = new URLSearchParams({
+			nombre: 'ISP DE PRUEBA', rif: 'J-00000000-0', correo: 'cobranza@example.com',
+			url: base, usuario: SANDBOX_API_USER.user_name, password: SANDBOX_API_USER.password,
+			estado_ACTIVO: 'on', estado_CORTADO: 'on', ventana: 'todas', recientes: '',
+			diasGracia: '0', maxFacturas: '', maxMonto: '', hora: '02:00',
+		})
+		const guardar = await fetch(`${panelBase}/configuracion`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: formulario })
+		assert.equal(guardar.status, 200)
+		assert.match(await guardar.text(), /Configuracion guardada/)
+
+		const accion = await fetch(`${panelBase}/acciones/importar`, { method: 'POST', body: '', redirect: 'manual' })
+		assert.equal(accion.status, 303)
+		const destino = accion.headers.get('location') ?? ''
+		const id = Number(/\/sincronizacion\/(\d+)/.exec(destino)?.[1])
+		assert.ok(id > 0, 'el redirect apunta a una corrida')
+
+		const todos = await (await fetch(`${panelBase}/sincronizacion/${id}`)).text()
+		assert.match(todos, /Todos los resultados/)
+		assert.match(todos, /Ordenar por Contrato/)
+		assert.match(todos, /class="ordenable /)
+
+		const soloImportadas = await (await fetch(`${panelBase}/sincronizacion/${id}?resultado=importada`)).text()
+		assert.match(soloImportadas, /42 filas \(filtradas\)/, 'el filtro deja solo las importadas')
+		assert.doesNotMatch(soloImportadas, /class="pill mute">excluida estado<\/span><\/td>/)
+
+		const conTexto = await (await fetch(`${panelBase}/sincronizacion/${id}?q=zzzz`)).text()
+		assert.match(conTexto, /Ninguna fila coincide con el filtro/)
+
+		const clientes = await (await fetch(`${panelBase}/clientes?q=ELENA`)).text()
+		assert.match(clientes, /ELENA RUIZ/)
 	})
 
 	it('el panel sirve sus pantallas y el enunciado, sin pantalla de simulador', async () => {

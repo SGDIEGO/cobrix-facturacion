@@ -283,15 +283,13 @@ async function aplicar(
 	simulacion: boolean, corridaId: number,
 ): Promise<Contadores> {
 	const contadores = { ...CONTADORES_VACIOS }
+	// Los clientes nuevos se cuentan por documento, no por factura: un titular con tres
+	// cuotas es un solo cliente nuevo.
 	const clientesNuevos = new Set<string>()
-	const contratosNuevos = new Set<string>()
-
 	for (const candidata of candidatas) {
-		if (!almacen.buscarCliente(candidata.cliente.documento)) {
-			contadores.clientesNuevos += 1
-			clientesNuevos.add(candidata.cliente.documento)
-		}
+		if (!almacen.buscarCliente(candidata.cliente.documento)) clientesNuevos.add(candidata.cliente.documento)
 	}
+	contadores.clientesNuevos = clientesNuevos.size
 
 	if (!simulacion) {
 		for (const candidata of candidatas) {
@@ -315,12 +313,10 @@ async function aplicar(
 			})
 			contadores.importadas += 1
 			contadores.montoImportadoCents += candidata.montoCents
-			if (!contratosNuevos.has(String(cuota.contratoId))) contratosNuevos.add(String(cuota.contratoId))
 		}
 	} else {
 		contadores.importadas = candidatas.length
 		contadores.montoImportadoCents = candidatas.reduce((suma, candidata) => suma + candidata.montoCents, 0)
-		contadores.clientesNuevos = clientesNuevos.size
 	}
 
 	for (const evaluada of evaluadas) {

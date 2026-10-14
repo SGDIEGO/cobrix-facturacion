@@ -320,6 +320,19 @@ export class Almacen {
 			.run(facturasIsp, facturaId)
 	}
 
+	/** Vuelve a abrir una factura pagada porque el administrador anulo o reverso ese cobro. */
+	reabrirFactura(facturaId: number, saldoCents: number): void {
+		this.db.prepare(`UPDATE factura SET estado = 'ABIERTA', saldo_cents = ?, pagada_en = NULL,
+			pago_facturas_isp = '', actualizado_en = datetime('now') WHERE id = ? AND estado = 'PAGADA'`)
+			.run(saldoCents, facturaId)
+	}
+
+	facturasPagadas(): FilaFactura[] {
+		return this.db.prepare(`SELECT f.*, c.documento AS cliente_documento, c.nombre AS cliente_nombre
+			FROM factura f JOIN cliente c ON c.id = f.cliente_id
+			WHERE f.estado = 'PAGADA' ORDER BY f.id`).all() as unknown as FilaFactura[]
+	}
+
 	registrarEvento(datos: { clienteId: number; facturaId?: number | undefined; tipo: string; detalle: string }): void {
 		this.db.prepare('INSERT INTO evento (cliente_id, factura_id, tipo, detalle) VALUES (?, ?, ?, ?)')
 			.run(datos.clienteId, datos.facturaId ?? null, datos.tipo, datos.detalle)
@@ -493,12 +506,12 @@ function leerContadores(datos: string): Contadores {
 			yaImportadas: Number(valor.yaImportadas ?? 0), marcadasPagadas: Number(valor.marcadasPagadas ?? 0),
 			abonosParciales: Number(valor.abonosParciales ?? 0), excluidas: Number(valor.excluidas ?? 0),
 			frenadas: Number(valor.frenadas ?? 0), montoImportadoCents: Number(valor.montoImportadoCents ?? 0),
-			clientesNuevos: Number(valor.clientesNuevos ?? 0),
+			clientesNuevos: Number(valor.clientesNuevos ?? 0), reabiertas: Number(valor.reabiertas ?? 0),
 		}
 	} catch {
 		return {
 			cuotasRevisadas: 0, importadas: 0, yaImportadas: 0, marcadasPagadas: 0,
-			abonosParciales: 0, excluidas: 0, frenadas: 0, montoImportadoCents: 0, clientesNuevos: 0,
+			abonosParciales: 0, excluidas: 0, frenadas: 0, montoImportadoCents: 0, clientesNuevos: 0, reabiertas: 0,
 		}
 	}
 }

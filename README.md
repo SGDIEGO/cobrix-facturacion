@@ -37,6 +37,36 @@ números de los criterios de aceptación se cumplan. Para usar la fecha real, qu
 Para crear pagos del lado del ISP y probar *Actualizar pagadas*, usa la sección **Simulador**
 del Swagger (`POST /__sim/pagar`, `POST /__sim/anular`).
 
+### Crear un pago y sincronizarlo
+
+El pago se registra en la caja del ISP y Cobrix se entera al correr *Actualizar pagadas*:
+
+```bash
+# pago completo de todas las cuotas pendientes del contrato
+curl -X POST http://127.0.0.1:4310/__sim/pagar -H 'content-type: application/json' \
+  -d '{"id_contrato": 900101}'
+
+# abono parcial (paga las mas viejas primero)
+curl -X POST http://127.0.0.1:4310/__sim/pagar -H 'content-type: application/json' \
+  -d '{"id_contrato": 900103, "monto": 25}'
+
+# cuotas especificas
+curl -X POST http://127.0.0.1:4310/__sim/pagar -H 'content-type: application/json' \
+  -d '{"id_contrato": 900114, "id_cuotas": [7000088, 7000089]}'
+
+# anular un cobro: las cuotas vuelven a deber
+curl -X POST http://127.0.0.1:4310/__sim/anular -H 'content-type: application/json' \
+  -d '{"id_factura": 8800118}'
+```
+
+Para saber los IDs reales de cada contrato: `GET /__sim/contratos` (lista `pendientes` por
+contrato) o `GET /api/v1/isp/contrato/individual?id_contrato=900114` con el token del login.
+
+Si el ISP anula un cobro **después** de que Cobrix ya lo sincronizó, la siguiente corrida de
+*Actualizar pagadas* reabre esas facturas con el saldo que el libro indique (resultado
+*reabierta* en el detalle). Si la anulación ocurre **antes** de sincronizar, simplemente no se
+marca nada como pagado.
+
 ## Pruebas
 
 ```bash
