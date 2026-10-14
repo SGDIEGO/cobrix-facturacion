@@ -54,6 +54,10 @@ npm run typecheck
 
 - **Stack**: el esqueleto entregado (Node 24 + TypeScript, sin dependencias). El panel es
   server-rendered con el `layout.ts` del esqueleto y un CSS propio encima. Sin build step.
+  Diseño minimalista (paleta pastel azul polvo sobre grises cálidos, con modo oscuro), iconos de
+  FontAwesome 6 **servidos localmente** desde `src/web/assets/fontawesome` (funciona sin internet),
+  barra lateral colapsable (tira de iconos en escritorio, cajón en móvil, estado recordado) y
+  paginación de 20/25/50 filas en todas las tablas largas.
 - **Persistencia de Cobrix**: `node:sqlite` en `data/cobrix.sqlite` (gitignored). Nunca se lee
   `data/billing-api.sqlite`: la comunicación con el administrador es solo HTTP.
 - **Montos**: en centavos de USD (enteros) para no arrastrar errores de punto flotante.
@@ -66,6 +70,20 @@ npm run typecheck
   cuotas futuras y la cuota fantasma; el token de 2 horas se renueva solo al vencer.
 - **Nada se adivina**: filas de otro contrato, cuotas duplicadas con datos distintos o filas del
   libro que no coinciden entre sí dejan la factura fuera con un motivo escrito en la corrida.
+
+## Diseño del panel
+
+Minimalista y empresarial, sobre el esqueleto entregado:
+
+- **Paleta pastel** (azul polvo `#5b7fa8` sobre grises cálidos) con modo oscuro coherente; una sola
+  familia tipográfica, escala cerrada y cifras alineadas para los montos.
+- **FontAwesome 6 servido localmente** (`src/web/assets/fontawesome`): el panel no depende de internet.
+- **Barra lateral colapsable**: en escritorio queda como tira de iconos con tooltip; en móvil es un
+  cajón que se cierra con la X, con `Escape` o tocando el fondo. El estado se recuerda en el navegador.
+- **Paginación** de 20/25/50 filas (20 por defecto) en clientes, corridas, detalle de corrida,
+  facturas del expediente e historial, con `« ‹ 1 2 3 … 10 › »` y el recuento "Mostrando 1–20 de 84".
+- **Leyendas**: qué significa cada resultado de corrida (importada, ya importada, frenada por tope,
+  abono parcial, exonerada, sin evidencia…) y notas de ayuda donde la operación lo pide.
 
 ## Estructura
 
