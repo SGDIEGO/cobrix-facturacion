@@ -65,6 +65,8 @@ detalle, incluidas las que no se importaron, con el contador de topes y la fila 
 cliente que se marcaron pagadas con la factura del ISP que las pagó. El operador ve qué pasó,
 por qué y qué sigue abierto, sin tocar el Swagger.
 
+**El panel no esboza el enunciado: fue auditado contra las capturas de `docs/capturas/referencia-layout/`.** Comparé pantalla por pantalla y cerré las diferencias que afectaban claridad: columna *Contrato* en las facturas del expediente, accesos rápidos siempre visibles, errores que dicen cómo seguir, tile *Contratos* y fecha de creación en el expediente, "Al día" en clientes sin deuda, y contadores con nombre propio para cada tipo de corrida (en pagadas, "Siguen pendientes" en vez de "Excluidas"). Los números de la referencia de layout (LUIS GOMEZ: 4 abiertas, 1 pagada, USD 95,00; MIGUEL ANGEL SOTO: 6 abiertas, USD 210,00) coinciden con los que produce este código.
+
 ## Cómo levantarlo y probarlo
 
 Ver el `README.md`. `npm test` corre 27 pruebas; el ciclo completo comprueba los números de los

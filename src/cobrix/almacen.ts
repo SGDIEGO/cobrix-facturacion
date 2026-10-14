@@ -350,6 +350,7 @@ export class Almacen {
 			id: fila.id, documento: fila.documento, nombre: fila.nombre,
 			tipo: fila.tipo === 'juridica' ? 'juridica' : 'natural',
 			email: fila.email, telefono: fila.telefono, origen: fila.origen,
+			creadoEn: String(fila.creado_en ?? ''),
 		}
 	}
 

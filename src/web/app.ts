@@ -91,7 +91,7 @@ export function createApp(deps: AppDeps): Server {
 
 		const tiles = [
 			{ label: 'Clientes', valor: String(totales.clientes), href: '/clientes' },
-			{ label: 'Contratos', valor: String(totales.contratos), href: '/clientes' },
+			{ label: 'Contratos importados', valor: String(totales.contratos), href: '/clientes' },
 			{ label: 'Facturas abiertas', valor: String(totales.facturasAbiertas), href: '/clientes' },
 			{ label: 'Facturas pagadas', valor: String(totales.facturasPagadas), href: '/clientes' },
 			{ label: 'Por cobrar', valor: usd(totales.porCobrarCents), href: '/clientes' },
@@ -135,6 +135,8 @@ export function createApp(deps: AppDeps): Server {
 						? html`<dl class="facts">
 							<dt>Administrador</dt><dd>${esc(proveedor.url)}</dd>
 							<dt>Usuario</dt><dd>${esc(proveedor.usuario)}</dd>
+							<dt>Fecha del sandbox</dt><dd>${date(today())}</dd>
+							<dt>Documentacion de la API</dt><dd><a href="${deps.simulatorUrl}/docs" target="_blank" rel="noopener">Swagger</a> · <a href="${deps.simulatorUrl}/openapi.json" target="_blank" rel="noopener">openapi.json</a></dd>
 							<dt>Importacion</dt><dd>${esc(describirConfig(config))}</dd>
 							${config.corridaAutomatica
 								? html`<dt>Corrida automatica</dt><dd>activa a las ${esc(config.horaCorrida)} (America/Caracas)</dd>`
@@ -226,7 +228,7 @@ export function createApp(deps: AppDeps): Server {
 								<td class="num">${cliente.abiertas}</td>
 								<td class="num">${cliente.pagadas}</td>
 								<td class="num">${usd(cliente.deudaCents)}</td>
-								<td>${cliente.vencimientoMasAntiguo ? date(cliente.vencimientoMasAntiguo) : '—'}</td>
+								<td>${cliente.vencimientoMasAntiguo ? date(cliente.vencimientoMasAntiguo) : 'Al dia'}</td>
 							</tr>`)}
 					</tbody>
 				</table></div>
@@ -256,6 +258,7 @@ export function createApp(deps: AppDeps): Server {
 				<div class="tile"><span>Deuda</span><strong>${usd(deuda)}</strong></div>
 				<div class="tile"><span>Facturas abiertas</span><strong>${abiertas.length}</strong></div>
 				<div class="tile"><span>Facturas pagadas</span><strong>${pagadas.length}</strong></div>
+				<div class="tile"><span>Contratos</span><strong>${contratos.length}</strong></div>
 			</section>
 			<section class="card"><header><h2>Datos del cliente</h2></header><div class="body">
 				<dl class="facts">
@@ -264,6 +267,7 @@ export function createApp(deps: AppDeps): Server {
 					<dt>Correo</dt><dd>${esc(cliente.email) || '—'}</dd>
 					<dt>Telefono</dt><dd>${esc(cliente.telefono) || '—'}</dd>
 					<dt>Origen</dt><dd>${esc(cliente.origen)}</dd>
+					<dt>Creado</dt><dd>${dateTime(cliente.creadoEn)}</dd>
 				</dl>
 			</div></section>
 			<section class="card"><header><h2>Contratos en el administrador</h2></header>
@@ -380,24 +384,30 @@ export function createApp(deps: AppDeps): Server {
 		}
 		const items = almacen.itemsDeCorrida(id)
 		const r = corrida.resumen
-		const contadores: Array<{ label: string; valor: number; destacado?: boolean }> = [
-			{ label: 'Cuotas revisadas', valor: r.cuotasRevisadas },
-			{ label: 'Importadas', valor: r.importadas, destacado: true },
-			{ label: 'Ya importadas', valor: r.yaImportadas },
-			{ label: 'Marcadas pagadas', valor: r.marcadasPagadas, destacado: true },
-			{ label: 'Abonos parciales', valor: r.abonosParciales },
-			{ label: 'Excluidas', valor: r.excluidas },
-			{ label: 'Frenadas por tope', valor: r.frenadas },
-			{ label: 'Clientes nuevos', valor: r.clientesNuevos },
-			{ label: 'Monto importado', valor: r.montoImportadoCents, destacado: true },
-		]
+		const esPagadas = corrida.tipo === 'PAGADAS'
+		const contadores: Array<{ label: string; valor: number; destacado?: boolean; dinero?: boolean }> = esPagadas
+			? [
+				{ label: 'Facturas consultadas', valor: r.cuotasRevisadas },
+				{ label: 'Marcadas pagadas', valor: r.marcadasPagadas, destacado: true },
+				{ label: 'Abonos parciales', valor: r.abonosParciales },
+				{ label: 'Siguen pendientes', valor: r.excluidas },
+			]
+			: [
+				{ label: 'Cuotas revisadas', valor: r.cuotasRevisadas },
+				{ label: 'Importadas', valor: r.importadas, destacado: true },
+				{ label: 'Ya importadas', valor: r.yaImportadas },
+				{ label: 'Clientes nuevos', valor: r.clientesNuevos },
+				{ label: 'Excluidas', valor: r.excluidas },
+				{ label: 'Frenadas por tope', valor: r.frenadas },
+				{ label: 'Monto importado', valor: r.montoImportadoCents, destacado: true, dinero: true },
+			]
 
 		return html`
-			<div class="head"><div><h1>Corrida ${corrida.id} · ${corrida.tipo === 'IMPORTACION' ? 'Importacion' : 'Pagadas'}</h1>
+			<div class="head"><div><h1>${esPagadas ? 'Actualizacion de pagadas' : 'Importacion'} #${corrida.id}</h1>
 				<p><a href="/sincronizacion">Sincronizacion</a> · detalle</p></div></div>
 			${corrida.error ? html`<div class="flash bad">${esc(corrida.error)}</div>` : ''}
 			<section class="tiles">${contadores.map(c => html`
-				<div class="tile"><span>${c.label}</span><strong>${c.valor > 0 || c.destacado ? (c.label === 'Monto importado' ? usd(c.valor) : c.valor) : '0'}</strong></div>`)}
+				<div class="tile"><span>${c.label}</span><strong>${c.dinero ? usd(c.valor) : c.valor}</strong></div>`)}
 			</section>
 			<section class="card"><header><h2>Cuota por cuota</h2></header>
 				<div class="table-wrap"><table>

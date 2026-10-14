@@ -146,6 +146,7 @@ export interface ClienteDetalle {
 	readonly email: string
 	readonly telefono: string
 	readonly origen: string
+	readonly creadoEn: string
 }
 
 export interface ContratoDetalle {
