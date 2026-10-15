@@ -52,6 +52,15 @@ function apiDe(almacen: Almacen, urlBase: string): ClienteApi {
 	return new ClienteApi({ baseUrl: proveedor.url || urlBase, usuario: proveedor.usuario, password: proveedor.password })
 }
 
+/** Mensaje claro cuando todavia no se configuro el proveedor, en vez del error crudo de la API. */
+function faltaProveedor(almacen: Almacen): string | null {
+	const proveedor = almacen.leerProveedor()
+	if (!proveedor.url) return 'Falta la URL de la API del administrador en Configuracion.'
+	if (!proveedor.usuario) return 'Falta el usuario de la API del administrador en Configuracion.'
+	if (!proveedor.password) return 'Falta la contrasena de la API del administrador en Configuracion.'
+	return null
+}
+
 interface Flash {
 	readonly tone: Tone
 	readonly text: string
@@ -122,7 +131,7 @@ function controlesPaginacion(base: string, buscar: URLSearchParams, info: Pagina
 				<a class="${info.numero === totalPaginas ? 'disabled' : ''}" href="${info.numero === totalPaginas ? '#' : enlace(totalPaginas)}" aria-label="Ultima pagina" ${info.numero === totalPaginas ? 'aria-disabled="true"' : ''}>${icon('angles-right')}</a>
 			</nav>
 			<form class="tamano" method="get" action="${base}">
-				${[...buscar.entries()].filter(([clave]) => !['pagina', 'tamano'].includes(clave)).map(([clave, valor]) => html`<input type="hidden" name="${clave}" value="${valor}">`)}
+				${[...buscar.entries()].filter(([clave]) => !['pagina', 'tamano', 'mensaje', 'tono'].includes(clave)).map(([clave, valor]) => html`<input type="hidden" name="${clave}" value="${valor}">`)}
 				<label for="tamano">Filas por pagina</label>
 				<select id="tamano" name="tamano" onchange="this.form.submit()">
 					${TAMANOS.map(valor => html`<option value="${valor}" ${valor === info.tamano ? 'selected' : ''}>${valor}</option>`)}
@@ -1007,7 +1016,14 @@ export function createApp(deps: AppDeps): Server {
 			}
 			if (path === '/') return sendHtml(res, 200, cabecera('Resumen', '/', resumen(buscar)))
 			if (path === '/clientes') return sendHtml(res, 200, cabecera('Clientes', '/clientes', clientes(buscar)))
-			if (path === '/sincronizacion') return sendHtml(res, 200, cabecera('Sincronizacion', '/sincronizacion', sincronizacion(buscar)))
+			if (path === '/sincronizacion') {
+				const mensaje = buscar.get('mensaje')
+				const tono = (buscar.get('tono') ?? '') as Tone
+				const flash = mensaje && ['ok', 'bad', 'info', 'warn'].includes(tono)
+					? flashNueva(tono, mensaje, raw(esc(mensaje).replaceAll('Configuracion', '<a href="/configuracion">Configuracion</a>').replaceAll('Probar conexion', '<a href="/configuracion">Probar conexion</a>')))
+					: undefined
+				return sendHtml(res, 200, cabecera('Sincronizacion', '/sincronizacion', sincronizacion(buscar), flash))
+			}
 			if (path === '/conciliacion') {
 				const mensaje = buscar.get('mensaje')
 				const tono = (buscar.get('tono') ?? '') as Tone
@@ -1086,6 +1102,15 @@ export function createApp(deps: AppDeps): Server {
 
 		if (req.method === 'POST') {
 			const entrada = await leerCuerpo(req)
+
+			// Sin proveedor configurado se avisa claro, en vez de dejar que la API rechace el login.
+			if (path.startsWith('/acciones/') && path !== '/acciones/conciliar') {
+				const falta = faltaProveedor(almacen)
+				if (falta) {
+					const aviso = `${falta} Pulsa Probar conexion para verificarla.`
+					return redirigir(res, `/sincronizacion?mensaje=${encodeURIComponent(aviso)}&tono=bad`)
+				}
+			}
 
 			if (path === '/acciones/importar' || path === '/acciones/simular-importar') {
 				const simulacion = path === '/acciones/simular-importar'

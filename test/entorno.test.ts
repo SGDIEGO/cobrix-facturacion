@@ -61,10 +61,11 @@ describe('entorno de la prueba', () => {
 		}
 	})
 
-	it('tras una accion el panel redirige a la corrida (F5 no la repite)', async () => {
-		const respuesta = await fetch(`${panelBase}/acciones/simular-importar`, { method: 'POST', body: '', redirect: 'manual' })
-		assert.equal(respuesta.status, 303, 'POST -> Redirect -> GET')
-		assert.match(respuesta.headers.get('location') ?? '', /^\/sincronizacion\/\d+\?mensaje=/)
+	it('tras una accion el panel redirige (F5 no la repite)', async () => {
+		// Sin proveedor configurado avisa y vuelve a Sincronizacion (no crea corrida inutil).
+		const sinProveedor = await fetch(`${panelBase}/acciones/simular-importar`, { method: 'POST', body: '', redirect: 'manual' })
+		assert.equal(sinProveedor.status, 303, 'POST -> Redirect -> GET')
+		assert.match(sinProveedor.headers.get('location') ?? '', /^\/sincronizacion(\/\d+)?\?mensaje=/)
 	})
 
 	it('los enlaces de orden son absolutos, no relativos', async () => {
