@@ -152,11 +152,42 @@ src/cobrix/        el lado de Cobrix
   almacen.ts       base propia: empresa, proveedor, clientes, facturas, corridas, historial
   importar.ts      corrida de importación (con modo simulación)
   pagadas.ts       corrida de actualización de pagadas (con modo simulación)
+  conciliacion.ts  comparación del libro de cuotas con las facturas de Cobrix
+  orden.ts         lista blanca de columnas ordenables por tabla
   formularios.ts   validación de los formularios del panel
   planificador.ts  corrida automática diaria en America/Caracas
 src/web/           panel (app.ts + layout.ts del esqueleto)
 src/billing-api/   API simulada del administrador (no se toca)
-test/              pruebas de entorno, reglas y ciclo completo
+test/              pruebas de entorno, reglas, ciclo completo y conciliación
 docs/ENUNCIADO.md  enunciado completo
 docs/NOTA.md       decisiones, alcance y punto diferencial
+docs/API.md        guía de la API del administrador
 ```
+
+## Antes de commitear: cuidado con `data/billing-api.sqlite`
+
+Esa base **es del administrador** y se modifica cada vez que usás el simulador
+(`POST /__sim/pagar`, `/__sim/anular`, `/__sim/reiniciar`). Si la commiteás con pagos
+aplicados, los criterios de aceptación dejan de cumplirse para quien clone el repo
+(con la base original: 42 facturas y 20 clientes; con pagos aplicados: menos).
+
+```bash
+git status --short data/          # si aparece data/billing-api.sqlite, NO la commitees
+git checkout -- data/billing-api.sqlite   # y recuperala con el original
+```
+
+Las pruebas automáticas **no** tocan esa base: usan una temporal en el directorio del
+sistema, así que `npm test` es seguro.
+
+## Verificación rápida al clonar
+
+```bash
+npm install
+npm test              # 37 pruebas
+npm start             # panel en :4300, Swagger en :4310
+```
+
+Con la base original, el ciclo completo da los números del enunciado:
+simular importación → 42 facturas y 20 clientes por USD 1.235,00; importar → las mismas;
+tras los cinco pagos del simulador → 8 pagadas y 34 abiertas por USD 955,00.
+Si al clonar te da otros números, revisá que `data/billing-api.sqlite` no esté modificada.

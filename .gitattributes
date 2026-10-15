@@ -1,0 +1,9 @@
+# Texto siempre con LF: el proyecto corre en Node desde cualquier sistema.
+* text=auto eol=lf
+
+# Estos son binarios: git no debe tocarlos nunca.
+*.sqlite binary
+*.png binary
+*.woff2 binary
+*.woff binary
+*.ttf binary
