@@ -42,7 +42,7 @@ function almacenDe(deps: AppDeps): Almacen {
 	const ruta = deps.almacenPath ?? 'data/cobrix.sqlite'
 	if (almacenGlobal && almacenRuta === ruta) return almacenGlobal
 	almacenGlobal?.cerrar()
-	almacenGlobal = new Almacen(ruta)
+	almacenGlobal = new Almacen(ruta, { urlPorDefecto: deps.simulatorUrl })
 	almacenRuta = ruta
 	return almacenGlobal
 }

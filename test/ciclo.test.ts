@@ -275,6 +275,24 @@ describe('ciclo completo de la integracion', () => {
 		assert.ok(conAbono.every(factura => factura.saldoIspCents !== null && factura.saldoIspCents < factura.saldoCents))
 	})
 
+	it('una base recien creada viene con la configuracion escrita', () => {
+		const otra = new Almacen(join(dir, 'sembrada.sqlite'), { urlPorDefecto: 'http://127.0.0.1:9999' })
+		const empresa = otra.leerEmpresa()
+		assert.ok(empresa.nombre.length > 0, 'la empresa viene con nombre')
+		assert.ok(empresa.correoCobranza.length > 0, 'la empresa viene con correo de cobranza')
+		const proveedor = otra.leerProveedor()
+		assert.equal(proveedor.url, 'http://127.0.0.1:9999', 'el proveedor apunta al administrador del entorno')
+		assert.equal(proveedor.usuario, 'cobrix')
+		assert.equal(proveedor.password.length > 0, true, 'trae la contrasena del sandbox')
+		// Las reglas de importacion siguen siendo las de los criterios de aceptacion.
+		const config = otra.leerConfig()
+		assert.deepEqual(config.estadosImportables, ['ACTIVO', 'CORTADO'])
+		assert.equal(config.ventanaMeses, null)
+		assert.equal(config.maxCuotasRecientes, null)
+		assert.equal(config.diasGracia, 0)
+		otra.cerrar()
+	})
+
 	it('una corrida con credenciales malas queda registrada como fallida', async () => {
 		const malas = new ClienteApi({ baseUrl: base, usuario: SANDBOX_API_USER.user_name, password: 'no-es-la-clave' })
 		const corrida = await importar({ almacen, api: malas, hoy: HOY, simulacion: false })

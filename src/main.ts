@@ -31,7 +31,7 @@ const billingApi = createBillingApiServer(billingApiDb)
 await billingApi.listen(billingApiPort, host)
 const simulatorUrl = `http://${host}:${billingApiPort}`
 
-const almacen = new Almacen(resolve(root, 'data/cobrix.sqlite'))
+const almacen = new Almacen(resolve(root, 'data/cobrix.sqlite'), { urlPorDefecto: simulatorUrl })
 const app = createApp({ simulatorUrl, assignmentPath: resolve(root, 'docs/ENUNCIADO.md') })
 app.listen(appPort, host)
 

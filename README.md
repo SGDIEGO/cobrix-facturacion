@@ -23,6 +23,21 @@ Credenciales de la API: usuario `cobrix`, contraseña `cobrix-sandbox`.
 `npm start` fija la fecha de la prueba en **2026-10-13** (`SANDBOX_TODAY`) para que los
 números de los criterios de aceptación se cumplan. Para usar la fecha real, quita esa variable.
 
+## La configuración ya viene escrita
+
+La primera vez que arranca, Cobrix siembra su base (`data/cobrix.sqlite`) con:
+
+| Campo | Valor por defecto |
+|---|---|
+| Empresa · Nombre / RIF / Correo | `Cobrix (sandbox)` · `J-00000000-0` · `cobranza@cobrix.com` |
+| Administrador · URL | la del entorno local (`http://127.0.0.1:4310`) |
+| Administrador · Usuario / Contraseña | `cobrix` · `cobrix-sandbox` (las del sandbox, documentadas en `docs/API.md`) |
+| Reglas de importación | ACTIVO y CORTADO, sin ventana, sin tope de recientes, 0 días de gracia |
+
+Con eso el panel queda listo para sincronizar sin escribir nada. **Todo es editable** en
+Configuración: los valores sembrados solo se usan si la base está recién creada (empresa y
+proveedor vacíos), nunca pisan una configuración guardada.
+
 ## Cómo se opera
 
 1. **Configuración**: guarda la empresa y el proveedor (URL, usuario, contraseña) y pulsa

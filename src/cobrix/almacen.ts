@@ -129,14 +129,42 @@ CREATE INDEX IF NOT EXISTS evento_cliente ON evento(cliente_id, id DESC);
 
 export const ALMACEN_POR_DEFECTO = resolve('data/cobrix.sqlite')
 
+/** Valores con los que se crea la base la primera vez, para que el panel arranque usable. */
+const EMPRESA_POR_DEFECTO: Empresa = {
+	nombre: 'Cobrix (sandbox)',
+	rif: 'J-00000000-0',
+	correoCobranza: 'cobranza@cobrix.com',
+}
+
+export interface OpcionesAlmacen {
+	/** URL del administrador para sembrar el proveedor (normalmente la del entorno local). */
+	readonly urlPorDefecto?: string
+}
+
 export class Almacen {
 	private readonly db: DatabaseSync
 
-	constructor(ruta: string = ALMACEN_POR_DEFECTO) {
+	constructor(ruta: string = ALMACEN_POR_DEFECTO, opciones: OpcionesAlmacen = {}) {
 		mkdirSync(dirname(ruta), { recursive: true })
 		this.db = new DatabaseSync(ruta)
 		this.db.exec(ESQUEMA)
 		this.asegurarColumnas()
+		this.sembrar(opciones.urlPorDefecto)
+	}
+
+	/**
+	 * Si la base esta recien creadada (empresa y proveedor vacios) se cargan los valores del
+	 * entorno de prueba: las credenciales del sandbox estan documentadas en el README y en
+	 * docs/API.md, asi que el panel queda listo para sincronizar sin escribir nada. El
+	 * operador puede cambiarlas en Configuracion como con cualquier otro valor.
+	 */
+	private sembrar(urlPorDefecto: string | undefined): void {
+		const empresa = this.leerEmpresa()
+		const proveedor = this.leerProveedor()
+		if (empresa.nombre === '' && empresa.rif === '' && empresa.correoCobranza === '' && proveedor.url === '') {
+			this.guardarEmpresa(EMPRESA_POR_DEFECTO)
+			if (urlPorDefecto) this.guardarProveedor({ url: urlPorDefecto, usuario: 'cobrix', password: 'cobrix-sandbox' })
+		}
 	}
 
 	cerrar(): void {
