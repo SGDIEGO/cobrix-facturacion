@@ -5,6 +5,7 @@
 export { Almacen, ALMACEN_POR_DEFECTO, fusionarConfig } from './almacen.ts'
 export { ClienteApi, ErrorApi, type CuotaPendiente, type FilaLibro } from './clienteApi.ts'
 export { importar, type OpcionesImportacion, type ResultadoImportacion } from './importar.ts'
+export { conciliar, type Diferencia, type InformeConciliacion, type OpcionesConciliacion } from './conciliacion.ts'
 export { actualizarPagadas, type OpcionesPagadas, type ResultadoPagadas } from './pagadas.ts'
 export { crearPlanificador, proximaEjecucion, type Planificador } from './planificador.ts'
 export {

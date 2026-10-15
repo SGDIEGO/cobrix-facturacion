@@ -76,9 +76,22 @@ npm run typecheck
 
 | Archivo | Qué cubre |
 | --- | --- |
-| `test/entorno.test.ts` | La API entregada responde como se documenta y el panel sirve sus pantallas |
+| `test/entorno.test.ts` | La API entregada responde como se documenta, el panel sirve sus pantallas y el ciclo de acciones (redirect, filtros, CSV, salud) |
 | `test/reglas.test.ts` | Reglas de negocio: identificación, periodo/corte, ventana, montos, configuración, corrida automática |
-| `test/ciclo.test.ts` | Ciclo completo: importar → pagar en la caja → actualizar pagadas, con los números de los criterios de aceptación |
+| `test/ciclo.test.ts` | Ciclo completo: importar → pagar en la caja → actualizar pagadas, conciliación, alertas y los números de los criterios de aceptación |
+
+## Conciliación y exportación
+
+- **Conciliación** (`/conciliacion`): lee el libro de cuotas del administrador de cada contrato con
+  facturas en Cobrix y compara cuota por cuota. Muestra tres grupos de diferencias — *solo en el
+  administrador*, *solo en Cobrix* y *no coinciden*— y separa lo que **no** es diferencia: las
+  cuotas que el ISP ya cobró (nunca se importan) y las futuras (todavía no tocan). No escribe nada.
+  Ejemplo real con la base entregada: la única diferencia es la cuota fantasma de ANA PEREZ
+  (2025-08, USD 25), que `pago_informacion` lista y `contrato/individual` no devuelve.
+- **Alertas** (Resumen): cuotas que vencen en 7 y 30 días, clientes con 3 o más cuotas vencidas,
+  facturas con abono parcial sin cerrar y composición de la deuda por antigüedad.
+- **CSV**: `/export/clientes.csv`, `/export/clientes/<documento>.csv` y `/export/conciliacion.csv`.
+- **Salud**: `/salud` devuelve JSON con el estado de la conexión, la última corrida y los totales.
 
 ## Decisiones técnicas
 

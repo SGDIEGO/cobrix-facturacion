@@ -16,6 +16,7 @@ import { Almacen } from '../src/cobrix/almacen.ts'
 import { ClienteApi } from '../src/cobrix/clienteApi.ts'
 import { importar } from '../src/cobrix/importar.ts'
 import { actualizarPagadas } from '../src/cobrix/pagadas.ts'
+import { conciliar } from '../src/cobrix/conciliacion.ts'
 import type { Orden } from '../src/cobrix/orden.ts'
 
 process.env.SANDBOX_TODAY = '2026-10-13'
@@ -241,6 +242,37 @@ describe('ciclo completo de la integracion', () => {
 		assert.equal(tercera.contadores.marcadasPagadas, 0)
 		assert.equal(almacen.totales(HOY).facturasPagadas, pagadasAntes)
 		assert.equal(almacen.totales(HOY).facturasAbiertas, abiertasAntes)
+	})
+
+	it('la conciliacion encuentra solo lo que realmente no cuadra', async () => {
+		const informe = await conciliar({ almacen, api: cliente(), hoy: HOY })
+		// De las ~210 cuotas del administrador, la mayoria ya estan cobradas (nunca se importan)
+		// o son futuras (todavia no tocan). La unica diferencia real deberia ser la cuota
+		// fantasma que el libro lista y contrato/individual no devuelve.
+		assert.equal(informe.resumen.contratosRevisados, 21)
+		assert.equal(informe.resumen.facturasCobrix, 42)
+		assert.equal(informe.resumen.cuotasCobradas > 50, true, 'las cuotas ya cobradas no son diferencia')
+		assert.equal(informe.resumen.cuotasFuturas > 10, true, 'las futuras son informativas')
+		assert.ok(informe.resumen.soloEnIsp <= 3, `pocas diferencias reales, hubo ${informe.resumen.soloEnIsp}`)
+		assert.equal(informe.resumen.soloEnCobrix, 0, 'ninguna factura sin respaldo en el libro')
+		assert.equal(informe.errores.length, 0)
+		for (const fila of informe.soloEnIsp) assert.ok(fila.cliente.length > 0, 'cada diferencia trae el cliente')
+	})
+
+	it('las alertas y el aging cuadran con los totales', () => {
+		const totales = almacen.totales(HOY)
+		const porVencer = almacen.porVencer(HOY, 30)
+		const atrasados = almacen.clientesMuyAtrasados(HOY, 3)
+		const aging = almacen.aging(HOY)
+
+		// La suma del aging es exactamente lo que se debe en facturas abiertas.
+		assert.equal(aging.reduce((suma, tramo) => suma + tramo.deudaCents, 0), totales.porCobrarCents)
+		assert.equal(aging.reduce((suma, tramo) => suma + tramo.cuotas, 0), totales.facturasAbiertas)
+		assert.equal(porVencer.cuotas <= totales.facturasAbiertas, true)
+		assert.equal(atrasados.every(cliente => cliente.vencidas >= 3), true)
+
+		const conAbono = almacen.abiertasConAbono()
+		assert.ok(conAbono.every(factura => factura.saldoIspCents !== null && factura.saldoIspCents < factura.saldoCents))
 	})
 
 	it('una corrida con credenciales malas queda registrada como fallida', async () => {

@@ -47,6 +47,8 @@ interface Evaluacion {
 	readonly montoCents: number
 	readonly pagada: boolean
 	readonly facturasIsp: string
+	/** Lo que el administrador dice que se debe, cuando solo hubo abono parcial. */
+	readonly saldoIspCents: number | null
 }
 
 const CONCURRENCIA = 4
@@ -223,7 +225,7 @@ async function correr(
 					clienteDocumento: factura.cliente_documento, clienteNombre: factura.cliente_nombre,
 					contratoExterno: contrato, resultado: 'sin_evidencia',
 					motivo: `no se pudo leer el libro de cuotas: ${mensaje}`,
-					montoCents: factura.saldo_cents, pagada: false, facturasIsp: '',
+					montoCents: factura.saldo_cents, pagada: false, facturasIsp: '', saldoIspCents: null,
 				})
 			}
 		}
@@ -254,7 +256,7 @@ async function correr(
 				motivo: pendienteEnContrato
 					? 'la cuota no aparece en el libro de pagos, pero sigue pendiente en el contrato: no se marca pagada'
 					: 'la cuota no aparece en el libro de pagos: sin evidencia no se marca pagada',
-				montoCents: factura.saldo_cents, pagada: false, facturasIsp: '',
+				montoCents: factura.saldo_cents, pagada: false, facturasIsp: '', saldoIspCents: null,
 			})
 			continue
 		}
@@ -270,7 +272,7 @@ async function correr(
 				facturaId: factura.id, idExterno: factura.id_externo, clienteId, clienteDocumento: factura.cliente_documento, clienteNombre: factura.cliente_nombre, contratoExterno: factura.contrato_externo,
 				resultado: 'sin_evidencia',
 				motivo: `las ${filas.length} filas de la cuota no coinciden entre si: sin evidencia no se marca pagada`,
-				montoCents: factura.saldo_cents, pagada: false, facturasIsp: '',
+				montoCents: factura.saldo_cents, pagada: false, facturasIsp: '', saldoIspCents: null,
 			})
 			continue
 		}
@@ -286,7 +288,7 @@ async function correr(
 				motivo: facturasIsp
 					? `saldo 0 con USD ${(pagadoCents / 100).toFixed(2)} pagados en la(s) factura(s) ${facturasIsp}`
 					: 'saldo 0 con lo pagado por el ISP',
-				montoCents: pagadoCents, pagada: true, facturasIsp,
+				montoCents: pagadoCents, pagada: true, facturasIsp, saldoIspCents: null,
 			})
 			continue
 		}
@@ -295,7 +297,7 @@ async function correr(
 				facturaId: factura.id, idExterno: factura.id_externo, clienteId, clienteDocumento: factura.cliente_documento, clienteNombre: factura.cliente_nombre, contratoExterno: factura.contrato_externo,
 				resultado: 'exonerada',
 				motivo: 'saldo 0 sin nada pagado (descuento): no es un pago',
-				montoCents: 0, pagada: false, facturasIsp: facturasIsp,
+				montoCents: 0, pagada: false, facturasIsp: facturasIsp, saldoIspCents: null,
 			})
 			continue
 		}
@@ -304,7 +306,7 @@ async function correr(
 				facturaId: factura.id, idExterno: factura.id_externo, clienteId, clienteDocumento: factura.cliente_documento, clienteNombre: factura.cliente_nombre, contratoExterno: factura.contrato_externo,
 				resultado: 'abono_parcial',
 				motivo: `el ISP tiene USD ${(pagadoCents / 100).toFixed(2)} pagados y USD ${(saldoCents / 100).toFixed(2)} de saldo: la factura sigue abierta`,
-				montoCents: pagadoCents, pagada: false, facturasIsp: facturasIsp,
+				montoCents: pagadoCents, pagada: false, facturasIsp: facturasIsp, saldoIspCents: saldoCents,
 			})
 			continue
 		}
@@ -312,7 +314,7 @@ async function correr(
 			facturaId: factura.id, idExterno: factura.id_externo, clienteId, clienteDocumento: factura.cliente_documento, clienteNombre: factura.cliente_nombre, contratoExterno: factura.contrato_externo,
 			resultado: 'pendiente_libro',
 			motivo: `el libro muestra un saldo de USD ${(saldoCents / 100).toFixed(2)}: sigue pendiente`,
-			montoCents: saldoCents, pagada: false, facturasIsp: facturasIsp,
+			montoCents: saldoCents, pagada: false, facturasIsp: facturasIsp, saldoIspCents: null,
 		})
 	}
 
@@ -337,8 +339,8 @@ async function correr(
 				clienteId: evaluacion.clienteId, facturaId: evaluacion.facturaId, tipo: 'factura_abono',
 				detalle: `abono parcial en la cuota ${evaluacion.idExterno}: ${evaluacion.motivo}`,
 			})
-		}
-		if (evaluacion.resultado === 'exonerada' || evaluacion.resultado === 'sin_evidencia'
+			if (!simulacion && evaluacion.saldoIspCents !== null) almacen.guardarSaldoIsp(evaluacion.facturaId, evaluacion.saldoIspCents)
+		}		if (evaluacion.resultado === 'exonerada' || evaluacion.resultado === 'sin_evidencia'
 			|| evaluacion.resultado === 'pendiente_contrato' || evaluacion.resultado === 'pendiente_libro') contadores.excluidas += 1
 		almacen.registrarItem(corridaId, {
 			contratoExterno: evaluacion.contratoExterno, cuotaId: evaluacion.idExterno,

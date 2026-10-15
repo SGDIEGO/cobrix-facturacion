@@ -16,6 +16,7 @@ import { Almacen } from '../cobrix/almacen.ts'
 import { ClienteApi } from '../cobrix/clienteApi.ts'
 import { importar } from '../cobrix/importar.ts'
 import { actualizarPagadas } from '../cobrix/pagadas.ts'
+import { conciliar, type Diferencia, type InformeConciliacion } from '../cobrix/conciliacion.ts'
 import { today } from '../shared/dates.ts'
 import { configDesdeFormulario, describirConfig, empresaDesdeFormulario, proveedorDesdeFormulario } from '../cobrix/formularios.ts'
 import type { ResultadoCuota } from '../cobrix/tipos.ts'
@@ -181,6 +182,12 @@ export function createApp(deps: AppDeps): Server {
 		res.end(body)
 	}
 
+	function sendJson(res: ServerResponse, status: number, cuerpo: unknown): void {
+		const texto = JSON.stringify(cuerpo)
+		res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(texto) })
+		res.end(texto)
+	}
+
 	/** POST -> Redirect -> GET: la URL queda limpia y F5 no repite la corrida. */
 	function redirigir(res: ServerResponse, destino: string): void {
 		res.writeHead(303, { location: destino })
@@ -205,7 +212,25 @@ export function createApp(deps: AppDeps): Server {
 		return layout({ title: titulo, active: activo, body, flash, company: almacen.leerEmpresa().nombre || 'Cobrix' })
 	}
 
-	const nota = (texto: string): Raw => html`<p class="nota">${icon('circle-info')}<span>${texto}</span></p>`
+	function nota(texto: string): Raw {
+		return html`<p class="nota">${icon('circle-info')}<span>${texto}</span></p>`
+	}
+
+	// ---------------------------------------------------------------- export y salud
+
+	function csv(res: ServerResponse, nombre: string, filas: Array<Array<string | number>>): void {
+		const escapar = (valor: string | number): string => {
+			const texto = String(valor ?? '')
+			return /[";\n]/.test(texto) ? `"${texto.replaceAll('"', '""')}"` : texto
+		}
+		const cuerpo = filas.map(fila => fila.map(escapar).join(';')).join('\r\n')
+		res.writeHead(200, {
+			'content-type': 'text/csv; charset=utf-8',
+			'content-disposition': `attachment; filename="${nombre}"`,
+			'content-length': Buffer.byteLength(cuerpo),
+		})
+		res.end(cuerpo)
+	}
 
 	/**
 	 * Cabecera de columna ordenable. El estado va en la URL (`orden` + `direccion`), asi que
@@ -253,6 +278,11 @@ export function createApp(deps: AppDeps): Server {
 		const corridas = almacen.ultimasCorridas()
 		const ordenDeudores = leerOrden(buscar, clavesOrden('deudores'), 'deuda', 'desc')
 		const deudores = almacen.clientesConCuotasVencidas(today(), ordenDeudores)
+		const porVencer7 = almacen.porVencer(today(), 7)
+		const porVencer30 = almacen.porVencer(today(), 30)
+		const atrasados = almacen.clientesMuyAtrasados(today(), 3)
+		const aging = almacen.aging(today())
+		const conAbono = almacen.abiertasConAbono()
 		const tiles = [
 			{ label: 'Clientes', icono: 'users', valor: String(totales.clientes), href: '/clientes' },
 			{ label: 'Contratos importados', icono: 'file-contract', valor: String(totales.contratos), href: '/clientes' },
@@ -327,6 +357,37 @@ export function createApp(deps: AppDeps): Server {
 					${nota('Ordenado por deuda. Son los clientes con cuotas vencidas: lo primero que hay que cobrar.')}
 				</section>` : ''}
 			<section class="card">
+				<header><h2>${icon('bell')}Alertas</h2>
+					<div class="acciones">
+						<a class="btn small" href="/salud">${icon('heart-pulse')}Salud</a>
+						<a class="btn small" href="/conciliacion">${icon('scale-balanced')}Conciliar</a>
+					</div>
+				</header>
+				<div class="body">
+					<div class="tiles">
+						<div class="tile"><span>${icon('calendar-day')}Vence en 7 dias</span><strong>${usd(porVencer7.deudaCents)}</strong><small class="muted">${porVencer7.cuotas} cuotas</small></div>
+						<div class="tile"><span>${icon('calendar-week')}Vence en 30 dias</span><strong>${usd(porVencer30.deudaCents)}</strong><small class="muted">${porVencer30.cuotas} cuotas</small></div>
+						${conAbono.length > 0 ? html`<div class="tile"><span>${icon('circle-half-stroke')}Con abono parcial</span><strong>${conAbono.length}</strong><small class="muted">aun sin cerrar</small></div>` : ''}
+					</div>
+					${atrasados.length > 0 ? html`
+						<h3>${icon('user-clock')}Clientes con 3 o mas cuotas vencidas</h3>
+						<div class="table-wrap"><table>
+							<thead><tr><th>Cliente</th><th class="num">Vencidas</th><th class="num">Deuda</th></tr></thead>
+							<tbody>${atrasados.map(cliente => html`
+								<tr><td><a href="/clientes/${encodeURIComponent(cliente.documento)}">${esc(cliente.nombre)}</a></td>
+								<td class="num">${cliente.vencidas}</td><td class="num dinero">${usd(cliente.deudaCents)}</td></tr>`)}
+							</tbody>
+						</table></div>` : html`<p class="muted">Ningun cliente con 3 o mas cuotas vencidas.</p>`}
+					<h3>${icon('chart-column')}Deuda por antiguedad</h3>
+					<div class="table-wrap"><table>
+						<thead><tr><th>Antigüedad</th><th class="num">Cuotas</th><th class="num">Deuda</th></tr></thead>
+						<tbody>${aging.map(tramo => html`
+							<tr><td>${tramo.etiqueta}</td><td class="num">${tramo.cuotas}</td><td class="num dinero">${usd(tramo.deudaCents)}</td></tr>`)}
+						</tbody>
+					</table></div>
+				</div>
+			</section>
+			<section class="card">
 				<header><h2>${icon('clock-rotate-left')}Ultimas corridas</h2><a class="btn small" href="/sincronizacion">Ver todas</a></header>
 				<div class="table-wrap"><table>
 					<thead><tr><th>#</th><th>Tipo</th><th>Inicio</th><th>Estado</th><th>Resultado</th></tr></thead>
@@ -385,7 +446,12 @@ export function createApp(deps: AppDeps): Server {
 				</form>
 			</div></section>
 			<section class="card">
-				<header><h2>${icon('users')}Clientes</h2><span class="muted">${total} en total</span></header>
+				<header><h2>${icon('users')}Clientes</h2>
+					<div class="acciones">
+						<span class="muted">${total} en total</span>
+						<a class="btn small" href="/export/clientes.csv${busqueda ? `?q=${encodeURIComponent(busqueda)}` : ''}">${icon('file-csv')}CSV</a>
+					</div>
+				</header>
 				<div class="table-wrap"><table>
 					<thead><tr>
 						${thOrden({ tabla: 'clientes', clave: 'nombre', etiqueta: 'Nombre', base: '/clientes', buscar, orden })}
@@ -482,7 +548,9 @@ export function createApp(deps: AppDeps): Server {
 					${contratos.length > 1 ? nota('Un titular con varios contratos vive en un solo cliente: las cuotas de todos se cobran juntas.') : ''}
 				</section>
 			</div>
-			<section class="card"><header><h2>${icon('file-invoice-dollar')}Facturas</h2><span class="muted">Una factura por cuota del administrador</span></header>
+			<section class="card"><header><h2>${icon('file-invoice-dollar')}Facturas</h2>
+				<a class="btn small" href="/export/clientes/${encodeURIComponent(cliente.documento)}.csv">${icon('file-csv')}CSV</a>
+				<span class="muted">Una factura por cuota del administrador</span></header>
 				<div class="table-wrap"><table>
 					<thead><tr>
 						${thOrden({ tabla: 'facturas', clave: 'numero', etiqueta: 'Numero', base: baseExpediente, buscar, orden: ordenFacturas })}
@@ -507,7 +575,11 @@ export function createApp(deps: AppDeps): Server {
 								<td>${date(factura.vencimiento)}</td>
 								<td>${date(factura.corte)}</td>
 								<td class="num">${usd(factura.totalCents)}</td>
-								<td class="num dinero">${factura.estado === 'PAGADA' ? '—' : usd(factura.saldoCents)}</td>
+								<td class="num dinero">${factura.estado === 'PAGADA' ? '—' : usd(factura.saldoCents)}
+								${factura.saldoIspCents !== null && factura.saldoIspCents !== factura.saldoCents
+									? html`<small class="sub">el ISP reporta ${usd(factura.saldoIspCents)}</small>`
+									: ''}
+								</td>
 								<td>${factura.estado === 'PAGADA' ? html`${pill('pagada', 'ok')} <span class="muted">${dateTime(factura.pagadaEn ?? '')}</span>` : pill('abierta', 'warn')}</td>
 							</tr>`)}
 					</tbody>
@@ -825,6 +897,89 @@ export function createApp(deps: AppDeps): Server {
 			</form>`
 	}
 
+	// ---------------------------------------------------------------- Conciliacion
+
+	function conciliacion(buscar: URLSearchParams, flash?: Flash | undefined): Raw {
+		const guardada = almacen.leerConciliacion()
+		const informe = guardada?.informe as InformeConciliacion | null
+		const total = informe ? informe.resumen.soloEnIsp + informe.resumen.soloEnCobrix + informe.resumen.noCoincide : 0
+		const tamano = Math.max(1, Number(buscar.get('tamano')) || TAMANO_POR_DEFECTO)
+		const grupo = buscar.get('grupo') ?? 'todos'
+		const filas: Array<{ grupo: string; fila: Diferencia }> = informe
+			? [
+				...(grupo === 'todos' || grupo === 'isp' ? informe.soloEnIsp.map(fila => ({ grupo: 'isp', fila })) : []),
+				...(grupo === 'todos' || grupo === 'cobrix' ? informe.soloEnCobrix.map(fila => ({ grupo: 'cobrix', fila })) : []),
+				...(grupo === 'todos' || grupo === 'no-coincide' ? informe.noCoincide.map(fila => ({ grupo: 'no-coincide', fila })) : []),
+			]
+			: []
+		const info = pagina(Number(buscar.get('pagina')) || 1, tamano, filas.length)
+		const visibles = filas.slice((info.numero - 1) * info.tamano, info.numero * info.tamano)
+
+		return html`
+			<section class="card"><div class="body">
+				<div class="acciones">
+					<form method="post" action="/acciones/conciliar">
+						<button class="btn primary" type="submit">${icon('scale-balanced')}Conciliar ahora</button>
+					</form>
+					${guardada ? html`<span class="muted">Ultima conciliacion: ${dateTime(guardada.fecha)}</span>` : html`<span class="muted">Todavia no se concilio. Compara el libro del administrador con las facturas de Cobrix.</span>`}
+				</div>
+				<p class="muted">La conciliacion lee el libro de cuotas de cada contrato con facturas en Cobrix y
+				compara cuota por cuota. No escribe nada: solo muestra donde no cuadran los dos sistemas.</p>
+			</div></section>
+			${informe ? html`
+				<section class="tiles">
+					<div class="tile"><span>${icon('file-contract')}Contratos revisados</span><strong>${informe.resumen.contratosRevisados}</strong></div>
+					<div class="tile"><span>${icon('list-check')}Cuotas en el libro</span><strong>${informe.resumen.cuotasIsp}</strong></div>
+					<div class="tile"><span>${icon('file-invoice-dollar')}Facturas en Cobrix</span><strong>${informe.resumen.facturasCobrix}</strong></div>
+					<div class="tile featured"><span>${icon('triangle-exclamation')}Diferencias</span><strong>${total}</strong></div>
+					<div class="tile"><span>${icon('hand-holding-dollar')}Solo en Cobrix</span><strong>${usd(informe.resumen.montoSoloEnCobrixCents)}</strong></div>
+					<div class="tile"><span>${icon('calendar-plus')}Futuras</span><strong>${informe.resumen.cuotasFuturas}</strong></div>
+					<div class="tile"><span>${icon('circle-check')}Ya cobradas</span><strong>${informe.resumen.cuotasCobradas}</strong></div>
+				</section>
+				<section class="card">
+					<header><h2>${icon('code-compare')}Diferencias</h2>
+						<div class="acciones">
+							${(['todos', 'isp', 'cobrix', 'no-coincide'] as const).map(valor => html`
+								<a class="btn small ${grupo === valor ? 'primary' : ''}" href="/conciliacion?grupo=${valor}">${etiquetaGrupo(valor)}</a>`)}
+							<a class="btn small" href="/export/conciliacion.csv">${icon('file-csv')}CSV</a>
+						</div>
+					</header>
+					<div class="table-wrap"><table>
+						<thead><tr>
+							<th>Grupo</th><th>Cliente</th><th>Contrato</th><th>Cuota</th><th>Periodo</th>
+							<th>En el administrador</th><th>En Cobrix</th><th class="num">Monto</th>
+						</tr></thead>
+						<tbody>${visibles.length === 0
+							? html`<tr class="empty-row"><td colspan="8">Sin diferencias en este grupo. Los dos sistemas cuadran.</td></tr>`
+							: visibles.map(({ grupo: tipo, fila }) => html`
+								<tr>
+									<td>${pill(etiquetaGrupo(tipo), tipo === 'cobrix' ? 'bad' : tipo === 'isp' ? 'info' : 'warn')}</td>
+									<td>${esc(fila.cliente) || '-'}</td>
+									<td class="mono">${esc(fila.contratoExterno)}</td>
+									<td class="mono">${esc(fila.cuotaId)}</td>
+									<td>${esc(fila.periodo) || '—'}</td>
+									<td class="muted">${esc(fila.enIsp)}</td>
+									<td class="muted">${esc(fila.enCobrix)}</td>
+									<td class="num">${usd(fila.montoCents)}</td>
+								</tr>`)}
+						</tbody>
+					</table></div>
+					${controlesPaginacion('/conciliacion', buscar, info)}
+				</section>
+				${informe.errores.length > 0 ? html`
+					<section class="card"><header><h2>${icon('triangle-exclamation')}Contratos que no se pudieron leer</h2></header>
+						<div class="body">${informe.errores.map(error => html`<p class="nota">${icon('circle-info')}<span>${esc(error)}</span></p>`)}</div>
+					</section>` : ''}
+			` : ''}`
+		}
+
+	function etiquetaGrupo(grupo: string): string {
+		if (grupo === 'isp') return 'Solo en el administrador'
+		if (grupo === 'cobrix') return 'Solo en Cobrix'
+		if (grupo === 'no-coincide') return 'No coinciden'
+		return 'Todos'
+	}
+
 	// ---------------------------------------------------------------- Rutas
 
 	async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -853,6 +1008,66 @@ export function createApp(deps: AppDeps): Server {
 			if (path === '/') return sendHtml(res, 200, cabecera('Resumen', '/', resumen(buscar)))
 			if (path === '/clientes') return sendHtml(res, 200, cabecera('Clientes', '/clientes', clientes(buscar)))
 			if (path === '/sincronizacion') return sendHtml(res, 200, cabecera('Sincronizacion', '/sincronizacion', sincronizacion(buscar)))
+			if (path === '/conciliacion') {
+				const mensaje = buscar.get('mensaje')
+				const tono = (buscar.get('tono') ?? '') as Tone
+				const flash = mensaje && ['ok', 'bad', 'info', 'warn'].includes(tono) ? flashNueva(tono, mensaje) : undefined
+				return sendHtml(res, 200, cabecera('Conciliacion', '/conciliacion', conciliacion(buscar, flash)))
+			}
+			if (path === '/salud') {
+				const totales = almacen.totales(hoy)
+				const corridas = almacen.listarCorridas(1)
+				const ultima = corridas[0]
+				const proveedor = almacen.leerProveedor()
+				const config = almacen.leerConfig()
+				let api = 'sin proveedor configurado'
+				if (proveedor.url) {
+					try {
+						const prueba = await apiDe(almacen, deps.simulatorUrl).probarConexion()
+						api = `ok (${prueba.contratos} contratos)`
+					} catch (error) {
+						api = `falla: ${error instanceof Error ? error.message : String(error)}`
+					}
+				}
+				return sendJson(res, 200, {
+					estado: api.startsWith('ok') ? 'ok' : 'degradado',
+					fecha: new Date().toISOString(), hoy,
+					empresa: almacen.leerEmpresa().nombre,
+					administrador: { url: proveedor.url, usuario: proveedor.usuario, conexion: api },
+					corridaAutomatica: { activa: config.corridaAutomatica, hora: config.horaCorrida },
+					ultimaCorrida: ultima ? { id: ultima.id, tipo: ultima.tipo, estado: ultima.estado, simulacion: ultima.simulacion, iniciadaEn: ultima.iniciadaEn, error: ultima.error } : null,
+					totales: {
+						clientes: totales.clientes, contratos: totales.contratos,
+						facturasAbiertas: totales.facturasAbiertas, facturasPagadas: totales.facturasPagadas,
+						porCobrarCents: totales.porCobrarCents, vencidas: totales.vencidas,
+					},
+				})
+			}
+			if (path === '/export/clientes.csv') {
+				const lista = almacen.listarClientes(buscar.get('q') ?? '')
+				return csv(res, 'clientes.csv', [
+					['Documento', 'Nombre', 'Tipo', 'Contratos', 'Abiertas', 'Pagadas', 'Deuda USD', 'Vence la mas antigua'],
+					...lista.map(cliente => [cliente.documento, cliente.nombre, cliente.tipo, cliente.contratos, cliente.abiertas, cliente.pagadas, (cliente.deudaCents / 100).toFixed(2), cliente.vencimientoMasAntiguo ?? '']),
+				])
+			}
+			if (/^\/export\/clientes\/[^/]+\.csv$/.test(path)) {
+				const documento = decodeURIComponent(path.split('/').pop()!.replace(/\.csv$/, ''))
+				const cliente = almacen.leerCliente(documento)
+				if (!cliente) return sendJson(res, 404, { error: 'cliente no encontrado' })
+				const facturas = almacen.facturasDeCliente(cliente.id)
+				return csv(res, `facturas-${cliente.documento}.csv`, [
+					['Factura', 'Cuota', 'Contrato', 'Periodo', 'Vencimiento', 'Corte', 'Total USD', 'Saldo USD', 'Estado', 'Pagada'],
+					...facturas.map(factura => [factura.numero, factura.idExterno, factura.contratoExterno, factura.periodo, factura.vencimiento, factura.corte, (factura.totalCents / 100).toFixed(2), (factura.saldoCents / 100).toFixed(2), factura.estado, factura.pagadaEn ?? '']),
+				])
+			}
+			if (/^\/export\/conciliacion\.csv$/.test(path) && almacen.leerConciliacion()) {
+				const informe = almacen.leerConciliacion()!.informe as InformeConciliacion
+				const filas: Array<Array<string | number>> = [['Grupo', 'Cliente', 'Contrato', 'Cuota', 'Periodo', 'En el administrador', 'En Cobrix', 'Monto USD']]
+				for (const [grupo, lista] of [['Solo en el administrador', informe.soloEnIsp], ['Solo en Cobrix', informe.soloEnCobrix], ['No coinciden', informe.noCoincide]] as const) {
+					for (const fila of lista) filas.push([grupo, fila.cliente, fila.contratoExterno, fila.cuotaId, fila.periodo, fila.enIsp, fila.enCobrix, (fila.montoCents / 100).toFixed(2)])
+				}
+				return csv(res, 'conciliacion.csv', filas)
+			}
 			if (path === '/configuracion') return sendHtml(res, 200, cabecera('Configuracion', '/configuracion', configuracion()))
 			if (/^\/sincronizacion\/\d+$/.test(path)) {
 				const id = Number(path.split('/').pop())
@@ -894,6 +1109,18 @@ export function createApp(deps: AppDeps): Server {
 					: flashNueva(simulacion ? 'info' : 'ok', mensajePagadas(resultado))
 				return redirigir(res, `/sincronizacion/${resultado.corridaId}?mensaje=${encodeURIComponent(flash.text)}&tono=${flash.tone}`)
 			}
+			if (path === '/acciones/conciliar') {
+				const api = apiDe(almacen, deps.simulatorUrl)
+				try {
+					const informe = await conciliar({ almacen, api, hoy })
+					almacen.guardarConciliacion(informe)
+					return redirigir(res, '/conciliacion')
+				} catch (error) {
+					const motivo = error instanceof Error ? error.message : String(error)
+					return redirigir(res, `/conciliacion?mensaje=${encodeURIComponent(`La conciliacion fallo: ${motivo}. Confirma que la API del administrador este levantada.`)}&tono=bad`)
+				}
+			}
+
 			if (path === '/proveedor/probar') {
 				const api = apiDe(almacen, deps.simulatorUrl)
 				try {

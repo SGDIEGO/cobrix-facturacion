@@ -107,6 +107,39 @@ describe('entorno de la prueba', () => {
 		assert.match(clientes, /ELENA RUIZ/)
 	})
 
+	it('la conciliacion, el CSV y la salud responden', async () => {
+		await fetch(`${panelBase}/acciones/importar`, { method: 'POST', body: '', redirect: 'manual' })
+		const conciliar = await fetch(`${panelBase}/acciones/conciliar`, { method: 'POST', body: '', redirect: 'manual' })
+		assert.equal(conciliar.status, 303)
+		assert.match(conciliar.headers.get('location') ?? '', /^\/conciliacion/)
+
+		const pantalla = await (await fetch(`${panelBase}/conciliacion`)).text()
+		assert.match(pantalla, /Contratos revisados/)
+		assert.match(pantalla, /Futuras/)
+		assert.match(pantalla, /Ya cobradas/)
+
+		const clientes = await fetch(`${panelBase}/export/clientes.csv`)
+		assert.equal(clientes.status, 200)
+		assert.match(clientes.headers.get('content-type') ?? '', /text\/csv/)
+		assert.match(clientes.headers.get('content-disposition') ?? '', /clientes\.csv/)
+		const csv = await clientes.text()
+		assert.match(csv, /Documento;Nombre;Tipo;Contratos/)
+		assert.ok(csv.split('\r\n').length > 1, 'trae filas')
+
+		const facturas = await fetch(`${panelBase}/export/clientes/V12345678.csv`)
+		assert.equal(facturas.status, 200)
+		assert.match(await facturas.text(), /Factura;Cuota;Contrato;Periodo/)
+
+		const conciliado = await fetch(`${panelBase}/export/conciliacion.csv`)
+		assert.equal(conciliado.status, 200)
+
+		const salud = await (await fetch(`${panelBase}/salud`)).json() as Record<string, unknown>
+		assert.equal(salud.estado, 'ok')
+		assert.equal(salud.hoy, '2026-10-13')
+		assert.ok(salud.totales, 'trae los totales')
+		assert.ok(salud.ultimaCorrida, 'trae la ultima corrida')
+	})
+
 	it('el panel sirve sus pantallas y el enunciado, sin pantalla de simulador', async () => {
 		for (const path of ['/', '/clientes', '/clientes/1', '/sincronizacion', '/configuracion']) {
 			const body = await (await fetch(`${panelBase}${path}`)).text()

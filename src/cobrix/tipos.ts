@@ -170,6 +170,8 @@ export interface FacturaDetalle {
 	readonly corte: string
 	readonly totalCents: number
 	readonly saldoCents: number
+	/** Lo que el administrador dice que se debe, cuando hubo un abono parcial. */
+	readonly saldoIspCents: number | null
 	readonly estado: EstadoFactura
 	readonly pagadaEn: string | null
 	readonly pagoFacturasIsp: string

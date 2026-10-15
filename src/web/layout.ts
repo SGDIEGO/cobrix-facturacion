@@ -63,6 +63,7 @@ const NAV: readonly NavItem[] = [
 	{ href: '/', label: 'Resumen', icon: 'gauge-high' },
 	{ href: '/clientes', label: 'Clientes', icon: 'users' },
 	{ href: '/sincronizacion', label: 'Sincronizacion', icon: 'arrows-rotate' },
+	{ href: '/conciliacion', label: 'Conciliacion', icon: 'scale-balanced' },
 	{ href: '/configuracion', label: 'Configuracion', icon: 'sliders' },
 ]
 
@@ -293,6 +294,9 @@ dl.facts dd { margin: 0; }
 .leyenda .pill { cursor: default; }
 .leyenda-item { display: inline-flex; align-items: center; gap: 7px; }
 .leyenda-item i { font-size: 12px; }
+
+td.dinero { font-weight: 600; }
+td.dinero .sub { display: block; font-weight: 400; font-size: 11px; color: var(--warn); white-space: nowrap; }
 
 /* ---------- filtros ---------- */
 .filtros { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }

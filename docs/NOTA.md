@@ -55,6 +55,7 @@ números de los criterios de aceptación son los que mandan.
 
 - Notificaciones o una cola para la corrida automática en vez de un `setTimeout` en proceso.
 - Una vista de conciliación: cuotas del libro que no existen en Cobrix y viceversa.
+  **(hecha — ver más abajo)**
 - Paginación del lado del administrador si `lista_ids_contratos` miles de contratos.
 - Pruebas de humo del panel en navegador (Playwright).
 
@@ -64,6 +65,22 @@ números de los criterios de aceptación son los que mandan.
 detalle, incluidas las que no se importaron, con el contador de topes y la fila de cuotas del
 cliente que se marcaron pagadas con la factura del ISP que las pagó. El operador ve qué pasó,
 por qué y qué sigue abierto, sin tocar el Swagger.
+
+**El panel no esboza el enunciado: fue auditado contra las capturas de `docs/capturas/referencia-layout/`.** Comparé pantalla por pantalla y cerré las diferencias que afectaban claridad: columna *Contrato* en las facturas del expediente, accesos rápidos siempre visibles, errores que dicen cómo seguir, tile *Contratos* y fecha de creación en el expediente, "Al día" en clientes sin deuda, y contadores con nombre propio para cada tipo de corrida (en pagadas, "Siguen pendientes" en vez de "Excluidas"). Los números de la referencia de layout (LUIS GOMEZ: 4 abiertas, 1 pagada, USD 95,00; MIGUEL ANGEL SOTO: 6 abiertas, USD 210,00) coinciden con los que produce este código.
+
+**Y una pantalla que nadie pidió: Conciliación** (`/conciliacion`). Lee el libro de cuotas del
+administrador de cada contrato con facturas en Cobrix y lo compara cuota por cuota. Separar lo que
+**es** diferencia de lo que **no** lo es fue la parte interesante: las cuotas que el ISP ya cobró
+nunca se importan (correcto) y las futuras todavía no tocan, así que ninguna de las dos es
+diferencia. Con la base entregada el informe encuentra **una sola**: la cuota fantasma de
+ANA PEREZ (2025-08, USD 25), que `pago_informacion` lista y `contrato/individual` no devuelve.
+Ese es exactamente el tipo de hallazgo que justifica la herramienta: sin ella, esa cuota es
+invisible para los dos sistemas.
+
+La acompañan: alertas de vencimiento (7 y 30 días), clientes con 3 o más cuotas vencidas,
+facturas con abono parcial sin cerrar y composición de la deuda por antigüedad; exportación a CSV
+de clientes, facturas y conciliación; y un endpoint `/salud` con el estado de la conexión y la
+última corrida, para monitoreo.
 
 **El panel no esboza el enunciado: fue auditado contra las capturas de `docs/capturas/referencia-layout/`.** Comparé pantalla por pantalla y cerré las diferencias que afectaban claridad: columna *Contrato* en las facturas del expediente, accesos rápidos siempre visibles, errores que dicen cómo seguir, tile *Contratos* y fecha de creación en el expediente, "Al día" en clientes sin deuda, y contadores con nombre propio para cada tipo de corrida (en pagadas, "Siguen pendientes" en vez de "Excluidas"). Los números de la referencia de layout (LUIS GOMEZ: 4 abiertas, 1 pagada, USD 95,00; MIGUEL ANGEL SOTO: 6 abiertas, USD 210,00) coinciden con los que produce este código.
 

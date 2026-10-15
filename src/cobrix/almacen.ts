@@ -101,6 +101,7 @@ CREATE TABLE IF NOT EXISTS factura (
 	creado_en TEXT NOT NULL DEFAULT (datetime('now')),
 	actualizado_en TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
 CREATE INDEX IF NOT EXISTS factura_cliente ON factura(cliente_id, estado);
 CREATE INDEX IF NOT EXISTS factura_estado ON factura(estado, vencimiento);
 CREATE TABLE IF NOT EXISTS corrida (
@@ -135,10 +136,28 @@ export class Almacen {
 		mkdirSync(dirname(ruta), { recursive: true })
 		this.db = new DatabaseSync(ruta)
 		this.db.exec(ESQUEMA)
+		this.asegurarColumnas()
 	}
 
 	cerrar(): void {
 		this.db.close()
+	}
+
+	/**
+	 * Columnas agregadas despues de la primera version del esquema. Se comprueba una por una
+	 * para que una base ya creada no falle al abrirse.
+	 */
+	private asegurarColumnas(): void {
+		const agregadas: Record<string, string> = {
+			factura: 'saldo_isp_cents INTEGER',
+		}
+		for (const [tabla, definicion] of Object.entries(agregadas)) {
+			const columnas = this.db.prepare(`PRAGMA table_info(${tabla})`).all() as unknown as Array<Record<string, unknown>>
+			const nombre = definicion.split(' ')[0]!
+			if (!columnas.some(columna => columna.name === nombre)) {
+				this.db.exec(`ALTER TABLE ${tabla} ADD COLUMN ${definicion}`)
+			}
+		}
 	}
 
 	// ------------------------------------------------------------ empresa y proveedor
@@ -316,8 +335,14 @@ export class Almacen {
 
 	marcarPagada(facturaId: number, facturasIsp: string): void {
 		this.db.prepare(`UPDATE factura SET estado = 'PAGADA', saldo_cents = 0, pagada_en = datetime('now'),
-			pago_facturas_isp = ?, actualizado_en = datetime('now') WHERE id = ? AND estado = 'ABIERTA'`)
+			pago_facturas_isp = ?, saldo_isp_cents = NULL, actualizado_en = datetime('now') WHERE id = ? AND estado = 'ABIERTA'`)
 			.run(facturasIsp, facturaId)
+	}
+
+	/** Anota el saldo que reporta el administrador cuando solo hubo un abono parcial. */
+	guardarSaldoIsp(facturaId: number, saldoIspCents: number): void {
+		this.db.prepare('UPDATE factura SET saldo_isp_cents = ?, actualizado_en = datetime(\'now\') WHERE id = ?')
+			.run(saldoIspCents, facturaId)
 	}
 
 	/** Vuelve a abrir una factura pagada porque el administrador anulo o reverso ese cobro. */
@@ -334,8 +359,19 @@ export class Almacen {
 	}
 
 	registrarEvento(datos: { clienteId: number; facturaId?: number | undefined; tipo: string; detalle: string }): void {
+		// Idempotente: un abono parcial repetido en cada corrida no debe llenar el historial.
+		if (datos.facturaId !== undefined && ['factura_abono', 'factura_reabierta'].includes(datos.tipo)) {
+			const existe = this.db.prepare('SELECT COUNT(*) AS n FROM evento WHERE factura_id = ? AND tipo = ?').get(datos.facturaId, datos.tipo) as unknown as Record<string, unknown>
+			if (Number(existe.n) > 0) return
+		}
 		this.db.prepare('INSERT INTO evento (cliente_id, factura_id, tipo, detalle) VALUES (?, ?, ?, ?)')
 			.run(datos.clienteId, datos.facturaId ?? null, datos.tipo, datos.detalle)
+	}
+
+	/** true si esa factura ya tiene un evento de ese tipo (para no repetirlo en cada corrida). */
+	eventoExistente(facturaId: number, tipo: string): boolean {
+		const fila = this.db.prepare('SELECT COUNT(*) AS n FROM evento WHERE factura_id = ? AND tipo = ?').get(facturaId, tipo) as unknown as Record<string, unknown>
+		return Number(fila.n) > 0
 	}
 
 	// ------------------------------------------------------------ consultas del panel
@@ -419,6 +455,7 @@ export class Almacen {
 			totalCents: fila.total_cents, saldoCents: fila.saldo_cents,
 			estado: fila.estado === 'PAGADA' ? 'PAGADA' : 'ABIERTA',
 			pagadaEn: fila.pagada_en, pagoFacturasIsp: fila.pago_facturas_isp,
+			saldoIspCents: fila.saldo_isp_cents === null ? null : Number(fila.saldo_isp_cents),
 		}))
 	}
 
@@ -440,6 +477,97 @@ export class Almacen {
 	contarEventosCliente(clienteId: number): number {
 		const fila = this.db.prepare('SELECT COUNT(*) AS n FROM evento WHERE cliente_id = ?').get(clienteId) as unknown as Record<string, unknown>
 		return Number(fila.n)
+	}
+
+	// ------------------------------------------------------------ alertas y conciliacion
+
+	/** Cuotas abiertas cuya fecha de corte cae dentro de los proximos N dias. */
+	porVencer(hoy: string, dias: number): { deudaCents: number; cuotas: number } {
+		const fila = this.db.prepare(`SELECT COALESCE(SUM(saldo_cents), 0) AS deuda, COUNT(*) AS cuotas
+			FROM factura WHERE estado = 'ABIERTA' AND corte >= ? AND corte <= date(?, '+' || ? || ' days')`)
+			.get(hoy, hoy, dias) as unknown as Record<string, unknown>
+		return { deudaCents: Number(fila.deuda), cuotas: Number(fila.cuotas) }
+	}
+
+	/** Clientes con mas de N cuotas ya vencidas. */
+	clientesMuyAtrasados(hoy: string, cuotas: number, limite = 10): { documento: string; nombre: string; deudaCents: number; vencidas: number }[] {
+		const filas = this.db.prepare(`SELECT c.documento, c.nombre,
+			COALESCE(SUM(f.saldo_cents), 0) AS deuda, COUNT(*) AS vencidas
+			FROM factura f JOIN cliente c ON c.id = f.cliente_id
+			WHERE f.estado = 'ABIERTA' AND f.corte < ?
+			GROUP BY c.id HAVING COUNT(*) >= ? ORDER BY vencidas DESC, deuda DESC LIMIT ?`)
+			.all(hoy, cuotas, limite) as unknown as Array<Record<string, unknown>>
+		return filas.map(fila => ({
+			documento: String(fila.documento), nombre: String(fila.nombre),
+			deudaCents: Number(fila.deuda), vencidas: Number(fila.vencidas),
+		}))
+	}
+
+	/** Composicion de la deuda abierta por antiguedad. */
+	aging(hoy: string): Array<{ etiqueta: string; deudaCents: number; cuotas: number }> {
+		const tramos: Array<{ etiqueta: string; desde: number; hasta: number }> = [
+			{ etiqueta: 'Al dia', desde: 0, hasta: 0 },
+			{ etiqueta: '1 a 30 dias', desde: 1, hasta: 30 },
+			{ etiqueta: '31 a 60 dias', desde: 31, hasta: 60 },
+			{ etiqueta: 'Mas de 60 dias', desde: 61, hasta: 100_000 },
+		]
+		return tramos.map(tramo => {
+			const fila = this.db.prepare(`SELECT COALESCE(SUM(saldo_cents), 0) AS deuda, COUNT(*) AS cuotas
+				FROM factura WHERE estado = 'ABIERTA'
+				AND CAST(julianday(?) - julianday(corte) AS INTEGER) BETWEEN ? AND ?`)
+				.get(hoy, tramo.desde, tramo.hasta) as unknown as Record<string, unknown>
+			return { etiqueta: tramo.etiqueta, deudaCents: Number(fila.deuda), cuotas: Number(fila.cuotas) }
+		})
+	}
+
+	/** Facturas abiertas con abono parcial: las que el ISP ya cobro algo. */
+	abiertasConAbono(limite = 10): Array<{ id: number; numero: string; clienteNombre: string; saldoCents: number; saldoIspCents: number | null }> {
+		const filas = this.db.prepare(`SELECT f.id, f.numero, f.saldo_cents, f.saldo_isp_cents, c.nombre AS cliente_nombre
+			FROM factura f JOIN cliente c ON c.id = f.cliente_id
+			WHERE f.estado = 'ABIERTA' AND f.saldo_isp_cents IS NOT NULL
+			ORDER BY f.saldo_isp_cents LIMIT ?`).all(limite) as unknown as Array<Record<string, unknown>>
+		return filas.map(fila => ({
+			id: fila.id as number, numero: String(fila.numero), clienteNombre: String(fila.cliente_nombre),
+			saldoCents: Number(fila.saldo_cents), saldoIspCents: fila.saldo_isp_cents === null ? null : Number(fila.saldo_isp_cents),
+		}))
+	}
+
+	/** Todas las facturas con su contrato, para conciliar contra el libro del administrador. */
+	facturasParaConciliar(): Array<{ id: number; idExterno: string; contratoExterno: string; periodo: string; totalCents: number; saldoCents: number; estado: string }> {
+		const filas = this.db.prepare('SELECT id, id_externo, contrato_externo, periodo, total_cents, saldo_cents, estado FROM factura').all() as unknown as Array<Record<string, unknown>>
+		return filas.map(fila => ({
+			id: fila.id as number, idExterno: String(fila.id_externo), contratoExterno: String(fila.contrato_externo),
+			periodo: String(fila.periodo), totalCents: Number(fila.total_cents),
+			saldoCents: Number(fila.saldo_cents), estado: String(fila.estado),
+		}))
+	}
+
+	/** Mapa de contrato -> nombre del cliente, para mostrar en la conciliacion. */
+	clientesPorContrato(): Map<string, string> {
+		const filas = this.db.prepare('SELECT id_externo, cliente_id FROM contrato').all() as unknown as Array<Record<string, unknown>>
+		const nombres = new Map<number, string>()
+		const clientes = this.db.prepare('SELECT id, nombre FROM cliente').all() as unknown as Array<Record<string, unknown>>
+		for (const cliente of clientes) nombres.set(cliente.id as number, String(cliente.nombre))
+		const salida = new Map<string, string>()
+		for (const fila of filas) salida.set(String(fila.id_externo), nombres.get(fila.cliente_id as number) ?? '')
+		return salida
+	}
+
+	guardarConciliacion(informe: unknown): void {
+		this.db.prepare('CREATE TABLE IF NOT EXISTS conciliacion (id INTEGER PRIMARY KEY CHECK (id = 1), datos TEXT NOT NULL, fecha TEXT NOT NULL DEFAULT (datetime(\'now\')))').run()
+		this.db.prepare(`INSERT INTO conciliacion (id, datos, fecha) VALUES (1, ?, datetime('now'))
+			ON CONFLICT(id) DO UPDATE SET datos = excluded.datos, fecha = datetime('now')`).run(JSON.stringify(informe))
+	}
+
+	leerConciliacion(): { fecha: string; informe: unknown } | null {
+		this.db.prepare('CREATE TABLE IF NOT EXISTS conciliacion (id INTEGER PRIMARY KEY CHECK (id = 1), datos TEXT NOT NULL, fecha TEXT NOT NULL DEFAULT (datetime(\'now\')))').run()
+		const fila = this.db.prepare('SELECT datos, fecha FROM conciliacion WHERE id = 1').get() as unknown as Record<string, unknown> | undefined
+		if (!fila) return null
+		try {
+			return { fecha: String(fila.fecha), informe: JSON.parse(String(fila.datos)) as unknown }
+		} catch {
+			return null
+		}
 	}
 
 	clientesConCuotasVencidas(hoy: string, orden?: Orden): { documento: string; nombre: string; deudaCents: number; vencidas: number }[] {
